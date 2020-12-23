@@ -3,6 +3,8 @@
 //     2) Verify Board view is not flipped.
 //     3) From PCB window, click DXP toolbar: DXP-->Run Script...-->Select 'Iterate Component Silkscreen'--> OK
 
+
+//TODO: Fix Layer Filter
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System;
 
@@ -22,13 +24,13 @@ var
     ObjID : Integer;
 begin
     ObjID := Obj.ObjectId;
-    if ObjID = eTextObject then
-    begin
-        Rect := Obj.BoundingRectangle;
-    end
-    else if ObjID = eComponentObject then
+    if ObjID = eComponentObject then
     begin
         Rect := Obj.BoundingRectangleNoNameComment;
+    end
+    else
+    begin
+        Rect := Obj.BoundingRectangle;
     end;
 
     result := Rect;
@@ -43,13 +45,50 @@ var
     L, R, T, B  : Integer;
     L2, R2, T2, B2  : Integer;
     Name : TPCBString;
+    Hidden : Boolean;
     OverX, OverY : Boolean;
+    Layer1, Layer2 : TPCBString;
 begin
     Name := Obj2.Identifier;
+    Hidden := Obj2.IsHidden;
+    Layer1 := Layer2String(Obj1.Layer);
+    Layer2 := Layer2String(Obj2.Layer);
+
+    // If object equals itself, return False
+    if (Obj1.ObjectId = Obj2.ObjectId) and (Obj1.ObjectId = eTextObject) then
+    begin
+        if Obj1.Identifier = Obj2.Identifier then
+        begin
+            result := False; Exit; // Continue
+        end;
+    end;
+    // Continue if Hidden
+    If Obj1.IsHidden or Obj2.IsHidden Then
+    Begin
+        result := False; Exit; // Continue
+    End;
+    // Continue if Layers Dont Match
+    if Layer1 = 'Top Overlay' then
+    begin
+       if (Layer2 <> 'Top Layer') and (Layer2 <> 'Top Overlay') then
+       begin
+          result := False; Exit; // Continue
+       end;
+    end;
+    if Layer1 = 'Bottom Overlay' then
+    begin
+       if (Layer2 <> 'Bottom Layer') and (Layer2 <> 'Bottom Overlay') then
+       begin
+          result := False; Exit; // Continue
+       end;
+    end;
+
+
 
     Rect1 := Get_Obj_Rect(Obj1);
     Rect2 := Get_Obj_Rect(Obj2);
 
+    // Get Bounding Area For Both Objects
     L := Rect1.Left + PAD;
     R := Rect1.Right - PAD;
     T := Rect1.Top - PAD;
@@ -61,22 +100,28 @@ begin
     B2 := Rect2.Bottom;
 
     // Overlap in X direction
-    if ((L > L2) and (L < R2)) or ((L2 > L) and (L2 < R)) or ((R < R2) and (R > L2)) or ((R2 < R) and (R2 > L)) then
-    begin
-        OverX := True;
-    end;
+    //if ((L > L2) and (L < R2)) or ((L2 > L) and (L2 < R)) or ((R < R2) and (R > L2)) or ((R2 < R) and (R2 > L)) then
+    //begin
+    //    OverX := True;
+    //end;
     // Overlap in Y direction
-    if ((B > B2) and (B < T2)) or ((B2 > B) and (B2 < T)) or ((T < T2) and (T > B2)) or ((T2 < T) and (T2 > B)) then
-    begin
-        OverY := True;
-    end;
+    //if ((B > B2) and (B < T2)) or ((B2 > B) and (B2 < T)) or ((T < T2) and (T > B2)) or ((T2 < T) and (T2 > B)) then
+    //begin
+    //    OverY := True;
+    //end;
     // Must Overlap in both directions for true overlap
-    if OverX and OverY then
+    //if OverX and OverY then
+    //begin
+    //    result := True; Exit; // Equivalent to return in C
+    //end;
+    if (B > T2) or (T < B2) or (L > R2) or (R < L2) then
     begin
-        result := True; Exit; // Equivalent to return in C
+         Obj2.Selected := False;
+        result := False; Exit; // Equivalent to return in C
     end;
-
-    result := False;
+    Obj1.Selected := False;
+    Obj2.Selected := True;
+    result := True;
 end;
 
 // Get pads for surrounding area
@@ -369,24 +414,45 @@ begin
 end;
 
 // Get components for surrounding area
-function IsOverCmp(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
+function IsOverObj(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
 var
     Iterator      : IPCB_SpatialIterator;
     Obj          : IPCB_Component;
-    //RectL         : TCoord;
-    //RectR         : TCoord;
-    //RectB         : TCoord;
-    //RectT         : TCoord;
+    RectL         : TCoord;
+    RectR         : TCoord;
+    RectB         : TCoord;
+    RectT         : TCoord;
+    RegIter       : Boolean;
 begin
-    //RectL := Slk.XLocation - Filter_Size; // Rectangle Left Filter Starting Point
-    //RectR := Slk.XLocation + Filter_Size; // Rectangle Right Filter Stopping Point
-    //RectB := Slk.YLocation - Filter_Size; // Rectangle Bottom Filter Starting Point
-    //RectT := Slk.YLocation + Filter_Size; // Rectangle Top Filter Stopping Point
+    RectL := Slk.XLocation - Filter_Size; // Rectangle Left Filter Starting Point
+    RectR := Slk.XLocation + Filter_Size; // Rectangle Right Filter Stopping Point
+    RectB := Slk.YLocation - Filter_Size; // Rectangle Bottom Filter Starting Point
+    RectT := Slk.YLocation + Filter_Size; // Rectangle Top Filter Stopping Point
 
-    Iterator        := Board.BoardIterator_Create;
-    Iterator.AddFilter_ObjectSet(MkSet(ObjID));
-    Iterator.AddFilter_IPCB_LayerSet(Slk.Layer);
-    Iterator.AddFilter_Method(eProcessAll);
+
+    if (ObjID = eComponentObject) then
+    begin
+        Iterator        := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(ObjID));
+        Iterator.AddFilter_IPCB_LayerSet(Slk.Component.Layer);
+        Iterator.AddFilter_Method(eProcessAll);
+        RegIter := True;
+    end
+    else
+    begin
+        Iterator := Board.SpatialIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(ObjID));
+        if (ObjID = ePadObject) then
+        begin
+            Iterator.AddFilter_IPCB_LayerSet(Slk.Component.Layer);
+        end
+        else
+        begin
+            Iterator.AddFilter_IPCB_LayerSet(Slk.Layer);
+        end;
+        Iterator.AddFilter_Area(RectL, RectB, RectR, RectT);
+        RegIter := False;
+    end;
 
     Obj := Iterator.FirstPCBObject;
     While Obj <> NIL Do
@@ -398,7 +464,17 @@ begin
 
         Obj := Iterator.NextPCBObject;
     End;
-    Board.BoardIterator_Destroy(Iterator);
+
+    // Destroy Iterator
+    If RegIter then
+    begin
+        Board.BoardIterator_Destroy(Iterator);
+    end
+    else
+    begin
+        Board.SpatialIterator_Destroy(Iterator);
+    end;
+
     result := False;
 end;
 
@@ -714,7 +790,7 @@ Begin
 
         BestFilterSize := GetBestCmpFilterSize(Cmp, FilterSize);
 
-        Board.GraphicalView_ZoomOnRect(Cmp.x-BestFilterSize,Cmp.y+BestFilterSize+Offset,Cmp.x+BestFilterSize,Cmp.y-BestFilterSize+Offset);
+        Board.GraphicalView_ZoomOnRect(Silkscreen.XLocation-BestFilterSize,Silkscreen.YLocation+BestFilterSize,Silkscreen.XLocation+BestFilterSize,Silkscreen.YLocation-BestFilterSize);
 
         // Zoom To Selected Component
         //Offset := MilsToCoord(200);
@@ -727,7 +803,11 @@ Begin
              Cmp.ChangeNameAutoposition := NextAutoP;
              AutoPosDeltaAdjust(NextAutoP, Silkscreen, Layer2String(Cmp.Layer));
 
-             If IsOverCmp(Board, Silkscreen, eComponentObject, BestFilterSize) or IsOverCmp(Board, Silkscreen, eTextObject, BestFilterSize) Then
+             //If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) or
+             //   IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) or
+             //   IsOverObj(Board, Silkscreen, eComponentObject, BestFilterSize)
+             If IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize)
+             Then
              Begin
                  Continue;
              End
@@ -736,9 +816,7 @@ Begin
                  Cmp := Iterator.NextPCBObject;
                  Break;
              End;
-             //Slk_Data := GetSilkAroundComponent(Board, Slk_Data, Cmp, BestFilterSize);
              //Pad_Data := GetPadsAroundComponent(Board, Pad_Data, Cmp, BestFilterSize);
-             //Trk_Data := GetTracksAroundComponent(Board, Trk_Data, Cmp, BestFilterSize*4);
 
         End;
 
