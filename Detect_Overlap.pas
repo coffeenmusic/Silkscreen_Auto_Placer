@@ -15,6 +15,7 @@ Const
     TRKCSVFILE = 'Trk_Dataset.csv';
     CMPCSVFILE = 'Cmp_Dataset.csv';
 
+// May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
 var
     Rect    : TCoordRect;
@@ -33,61 +34,47 @@ begin
     result := Rect;
 end;
 
-function Is_Overlapping(Slk: IPCB_Text, Cmp: IPCB_Component): Boolean;
+// Checks if 2 objects are overlapping on the PCB
+function Is_Overlapping(Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
 const
     PAD = 10000; // Allowed Overlap = 1 mil
 var
-    SRect, CRect, Rect    : TCoordRect;
+    Rect1, Rect2    : TCoordRect;
     L, R, T, B  : Integer;
-    CmpL, CmpR, CmpT, CmpB  : Integer;
-    ObjID : Integer;
+    L2, R2, T2, B2  : Integer;
     Name : TPCBString;
     OverX, OverY : Boolean;
 begin
-    Name := Cmp.Identifier;
-    SRect := Slk.BoundingRectangle;
-    CRect := Cmp.BoundingRectangleNoNameComment;
-    ObjID := cmp.ObjectId;
-    if cmp.ObjectId = eTextObject then
+    Name := Obj2.Identifier;
+
+    Rect1 := Get_Obj_Rect(Obj1);
+    Rect2 := Get_Obj_Rect(Obj2);
+
+    L := Rect1.Left + PAD;
+    R := Rect1.Right - PAD;
+    T := Rect1.Top - PAD;
+    B := Rect1.Bottom + PAD;
+
+    L2 := Rect2.Left;
+    R2 := Rect2.Right;
+    T2 := Rect2.Top;
+    B2 := Rect2.Bottom;
+
+    // Overlap in X direction
+    if ((L > L2) and (L < R2)) or ((L2 > L) and (L2 < R)) or ((R < R2) and (R > L2)) or ((R2 < R) and (R2 > L)) then
     begin
-        Rect := Slk.BoundingRectangle;
-    end
-    else if cmp.ObjectId = eComponentObject then
-    begin
-        Rect := Cmp.BoundingRectangleNoNameComment;
+        OverX := True;
     end;
-    //if Name = 'C345' then
-    //begin
-    //   Name := Cmp.Name.Text;
-    //end;
-
-    L := SRect.Left + PAD;
-    R := SRect.Right - PAD;
-    T := SRect.Top - PAD;
-    B := SRect.Bottom + PAD;
-
-    CmpL := CRect.Left;
-    CmpR := CRect.Right;
-    CmpT := CRect.Top;
-    CmpB := CRect.Bottom;
-
-    if ((L > CmpL) and (L < CmpR)) or ((CmpL > L) and (CmpL < R)) or ((R < CmpR) and (R > CmpL)) or ((CmpR < R) and (CmpR > L)) then
+    // Overlap in Y direction
+    if ((B > B2) and (B < T2)) or ((B2 > B) and (B2 < T)) or ((T < T2) and (T > B2)) or ((T2 < T) and (T2 > B)) then
     begin
-        OverX := True
+        OverY := True;
     end;
-    if ((B > CmpB) and (B < CmpT)) or ((CmpB > B) and (CmpB < T)) or ((T < CmpT) and (T > CmpB)) or ((CmpT < T) and (CmpT > B)) then
-    begin
-        OverY := True
-    end;
-
+    // Must Overlap in both directions for true overlap
     if OverX and OverY then
     begin
         result := True; Exit; // Equivalent to return in C
     end;
-    //If (((B > CmpB) and (B < CmpT)) or ((T < CmpT) and (T > CmpB))) and (((L > CmpL) and (L < CmpR)) or ((R < CmpR) and (R > CmpL))) Then
-    //Begin
-    //     result := True; Exit; // Equivalent to return in C
-    //End;
 
     result := False;
 end;
@@ -382,51 +369,34 @@ begin
 end;
 
 // Get components for surrounding area
-function IsOverCmp(Board: IPCB_Board, Slk: IPCB_Text, Filter_Size: Integer): Boolean;
+function IsOverCmp(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
 var
     Iterator      : IPCB_SpatialIterator;
-    Cmp          : IPCB_Component;
-    Cmp_Layer    : TPCBString;
-    RectL         : TCoord;
-    RectR         : TCoord;
-    RectB         : TCoord;
-    RectT         : TCoord;
+    Obj          : IPCB_Component;
+    //RectL         : TCoord;
+    //RectR         : TCoord;
+    //RectB         : TCoord;
+    //RectT         : TCoord;
 begin
-    RectL := Slk.XLocation - Filter_Size; // Rectangle Left Filter Starting Point
-    RectR := Slk.XLocation + Filter_Size; // Rectangle Right Filter Stopping Point
-    RectB := Slk.YLocation - Filter_Size; // Rectangle Bottom Filter Starting Point
-    RectT := Slk.YLocation + Filter_Size; // Rectangle Top Filter Stopping Point
+    //RectL := Slk.XLocation - Filter_Size; // Rectangle Left Filter Starting Point
+    //RectR := Slk.XLocation + Filter_Size; // Rectangle Right Filter Stopping Point
+    //RectB := Slk.YLocation - Filter_Size; // Rectangle Bottom Filter Starting Point
+    //RectT := Slk.YLocation + Filter_Size; // Rectangle Top Filter Stopping Point
 
     Iterator        := Board.BoardIterator_Create;
-    Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
+    Iterator.AddFilter_ObjectSet(MkSet(ObjID));
     Iterator.AddFilter_IPCB_LayerSet(Slk.Layer);
     Iterator.AddFilter_Method(eProcessAll);
 
-    //Cmp_Layer := Layer2String(Slk.Layer);
-
-    //Iterator := Board.SpatialIterator_Create;
-    //Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
-    //Iterator.AddFilter_LayerSet(MkSet(Slk.Layer));
-    //Iterator.AddFilter_LayerSet(MkSet(eTop));
-   // If (Cmp_Layer = 'Top Layer') or (Cmp_Layer = 'Top Overlay') Then
-    //Begin
-    //    Iterator.AddFilter_LayerSet(MkSet(eTopLayer));
-    //End
-    //Else
-    //Begin
-    //    Iterator.AddFilter_LayerSet(MkSet(eBottomLayer));
-    //End;
-    //Iterator.AddFilter_Area(RectL, RectB, RectR, RectT);
-
-    Cmp := Iterator.FirstPCBObject;
-    While Cmp <> NIL Do
+    Obj := Iterator.FirstPCBObject;
+    While Obj <> NIL Do
     Begin
-        If Is_Overlapping(Slk, Cmp) Then
+        If Is_Overlapping(Slk, Obj) Then
         Begin
              result := True; Exit; // Equivalent to return in C
         End;
 
-        Cmp := Iterator.NextPCBObject;
+        Obj := Iterator.NextPCBObject;
     End;
     Board.BoardIterator_Destroy(Iterator);
     result := False;
@@ -757,7 +727,7 @@ Begin
              Cmp.ChangeNameAutoposition := NextAutoP;
              AutoPosDeltaAdjust(NextAutoP, Silkscreen, Layer2String(Cmp.Layer));
 
-             If IsOverCmp(Board, Silkscreen, BestFilterSize) Then
+             If IsOverCmp(Board, Silkscreen, eComponentObject, BestFilterSize) or IsOverCmp(Board, Silkscreen, eTextObject, BestFilterSize) Then
              Begin
                  Continue;
              End
