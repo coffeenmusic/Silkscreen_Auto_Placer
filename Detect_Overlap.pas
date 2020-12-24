@@ -53,6 +53,7 @@ begin
     Hidden := Obj2.IsHidden;
     Layer1 := Layer2String(Obj1.Layer);
     Layer2 := Layer2String(Obj2.Layer);
+    Obj2.Selected := True;
 
     // If object equals itself, return False
     if (Obj1.ObjectId = Obj2.ObjectId) and (Obj1.ObjectId = eTextObject) then
@@ -457,6 +458,11 @@ begin
     Obj := Iterator.FirstPCBObject;
     While Obj <> NIL Do
     Begin
+        if Obj.ObjectId = eComponentBodyObject then
+        begin
+            Obj := Obj.Component;
+        end;
+
         If Is_Overlapping(Slk, Obj) Then
         Begin
              result := True; Exit; // Equivalent to return in C
@@ -805,8 +811,9 @@ Begin
 
              //If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) or
              //   IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) or
-             //   IsOverObj(Board, Silkscreen, eComponentObject, BestFilterSize)
-             If IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize)
+             //   IsOverObj(Board, Silkscreen, eComponentObject, BestFilterSize) or
+             //   IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize)
+             If IsOverObj(Board, Silkscreen, eComponentBodyObject, BestFilterSize)
              Then
              Begin
                  Continue;
