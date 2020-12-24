@@ -6,7 +6,7 @@
 
 //TODO: Fix Layer Filter
 Uses
-  Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System;
+  Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
 Const
     MACRODIR = 'C:\Users\stephen.thompson\Documents\Macros\Altium\Silk_GoodBad_Iterator_NoImage\';
@@ -53,7 +53,6 @@ begin
     Hidden := Obj2.IsHidden;
     Layer1 := Layer2String(Obj1.Layer);
     Layer2 := Layer2String(Obj2.Layer);
-    Obj2.Selected := True;
 
     // If object equals itself, return False
     if (Obj1.ObjectId = Obj2.ObjectId) and (Obj1.ObjectId = eTextObject) then
@@ -84,7 +83,11 @@ begin
        end;
     end;
 
+    Obj1.Selected := True;
+    Obj2.Selected := True;
 
+    Obj1.Selected := False;
+    Obj2.Selected := False;
 
     Rect1 := Get_Obj_Rect(Obj1);
     Rect2 := Get_Obj_Rect(Obj2);
@@ -115,13 +118,11 @@ begin
     //begin
     //    result := True; Exit; // Equivalent to return in C
     //end;
+
     if (B > T2) or (T < B2) or (L > R2) or (R < L2) then
     begin
-         Obj2.Selected := False;
         result := False; Exit; // Equivalent to return in C
     end;
-    Obj1.Selected := False;
-    Obj2.Selected := True;
     result := True;
 end;
 
@@ -424,6 +425,8 @@ var
     RectB         : TCoord;
     RectT         : TCoord;
     RegIter       : Boolean;
+    Name1, Name2 : TPCBString;
+    Layer1, Layer2 : TPCBString;
 begin
     RectL := Slk.XLocation - Filter_Size; // Rectangle Left Filter Starting Point
     RectR := Slk.XLocation + Filter_Size; // Rectangle Right Filter Stopping Point
@@ -443,24 +446,48 @@ begin
     begin
         Iterator := Board.SpatialIterator_Create;
         Iterator.AddFilter_ObjectSet(MkSet(ObjID));
-        if (ObjID = ePadObject) then
+        if (ObjID = ePadObject) or (ObjID = eComponentBodyObject) then
         begin
-            Iterator.AddFilter_IPCB_LayerSet(Slk.Component.Layer);
+            if Layer2String(Slk.Layer) = 'Top Overlay' then
+            begin
+                 Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eMechanical3));
+            end
+            else
+            begin
+                 Iterator.AddFilter_LayerSet(MkSet(eBottomLayer, eMechanical3));
+            end;
         end
         else
         begin
-            Iterator.AddFilter_IPCB_LayerSet(Slk.Layer);
+             if Layer2String(Slk.Layer) = 'Top Overlay' then
+            begin
+                 Iterator.AddFilter_LayerSet(MkSet(eTopOverlay));
+            end
+            else
+            begin
+                 Iterator.AddFilter_LayerSet(MkSet(eBottomOverlay));
+            end;
         end;
         Iterator.AddFilter_Area(RectL, RectB, RectR, RectT);
         RegIter := False;
     end;
+    Name1 := Slk.Component.Identifier;
 
     Obj := Iterator.FirstPCBObject;
     While Obj <> NIL Do
     Begin
+        // Convert ComponentBody objects to Component objects
         if Obj.ObjectId = eComponentBodyObject then
         begin
             Obj := Obj.Component;
+            if Obj.Name.Layer <> Slk.Layer then
+            begin
+                 //Name2 := Obj.Identifier;
+                 //Layer1 := Layer2String(Slk.Layer);
+                 //Layer2 := Layer2String(Obj.Name.Layer);
+                 Obj := Iterator.NextPCBObject;
+                 Continue;
+            end;
         end;
 
         If Is_Overlapping(Slk, Obj) Then
@@ -706,26 +733,7 @@ begin
       End;
   End;
 
-  Silk.Selected := False;
   Silk.MoveByXY(dx, dy);
-  Silk.Selected := True;
-end;
-
-function MsgDialogRetIntToStr(iteration : Integer): TPCBString;
-begin
-  Case iteration of
-       1 : result := 'OK';
-       2 : result := 'CANCEL';
-       3 : result := 'ABORT';
-       4 : result := 'RETRY';
-       5 : result := 'IGNORE';
-       6 : result := 'YES';
-       7 : result := 'NO';
-       8 : result := 'ALL';
-       9 : result := 'NOTOALL';
-       10 : result := 'YESTOALL';
-  else     result := 'UKNOWN';
-  end;
 end;
 
 {..............................................................................}
@@ -751,6 +759,8 @@ Var
     Silk_Rect        : TCoordRect;
     Silk_L           : Integer;
     IsOver           : Boolean;
+    Name : TPCBString;
+    StartT, StopT, DeltaT : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -805,26 +815,38 @@ Begin
         // Change Autoposition on Silkscreen
         For i := 0 to 8 Do
         Begin
+             StartT := GetMilliSecondTime();
+
+
              NextAutoP := GetNextAutoPosition(i);
              Cmp.ChangeNameAutoposition := NextAutoP;
              AutoPosDeltaAdjust(NextAutoP, Silkscreen, Layer2String(Cmp.Layer));
 
-             //If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) or
-             //   IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) or
-             //   IsOverObj(Board, Silkscreen, eComponentObject, BestFilterSize) or
-             //   IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize)
+             // Component Overlap Detection
              If IsOverObj(Board, Silkscreen, eComponentBodyObject, BestFilterSize)
+                //IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize)
              Then
              Begin
-                 Continue;
+                  StopT := GetMilliSecondTime();
+                  DeltaT := StopT - StartT;
+                  Continue;
              End
+             // Silkscreen RefDes Overlap Detection
+             //Else If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) Then
+             //Begin
+             //    Continue;
+             //End
+             // Silkscreen Tracks Overlap Detection
+             //Else If IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) Then
+             //Begin
+             //    Continue;
+             //End
              Else
              Begin
                  Cmp := Iterator.NextPCBObject;
                  Break;
              End;
              //Pad_Data := GetPadsAroundComponent(Board, Pad_Data, Cmp, BestFilterSize);
-
         End;
 
         // Undo Autoposition Change
