@@ -65,6 +65,32 @@ begin
     result := False;
 end;
 
+// Guess silkscreen size based on component size
+function Get_Silk_Size(Slk: IPCB_Text): Integer;
+var
+   Rect    : TCoordRect;
+   area : Integer;
+begin
+    // Stroke Width & Text Height
+    Rect := Get_Obj_Rect(Slk.Component);
+    area := CoordToMils(Rect.Right - Rect.Left)*CoordToMils(Rect.Top - Rect.Bottom);
+
+    if area <= 10000 then
+    begin
+         result := 30; Exit;
+    end
+    else if area <= 25000 then
+    begin
+         result := 50; Exit;
+    end
+    else if area <= 100000 then
+    begin
+         result := 70; Exit;
+    end;
+
+    result := 100;
+end;
+
 // Checks if 2 objects are overlapping on the PCB
 function Is_Overlapping(Board: IPCB_Board, Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
 const
@@ -414,6 +440,7 @@ Const
     SKIP_HIDDEN = True;
     AUTOSAVE_CNT = 50;
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
+    MIN_SILK_SIZE = 25; // [mils]
 Var
     Board         : IPCB_Board;
     Cmp           : IPCB_Component;
@@ -437,6 +464,7 @@ Var
     Placed : Boolean;
     PlaceCnt : Integer;
     xoff, yoff : Integer;
+    SlkSize : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -470,15 +498,14 @@ Begin
         SilkX := Silkscreen.XLocation;
         SilkY := Silkscreen.YLocation;
 
-        if (Silkscreen.Text = 'VCC-GFX') and (SilkX = 84690000) and (SilkY = 99830000) then
-        begin
-            Name := Silkscreen.Text;
-        end;
+        Silkscreen.Selected := True;
+
+        SlkSize := Get_Silk_Size(Silkscreen);
+        Silkscreen.Size := MilsToCoord(SlkSize);
+        Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
 
         // TODO: Automatically adjust silk size based on component size,
         //       if no placement can be made, reduce size, but have a minimum size
-
-        Silkscreen.Selected := True;
 
         // Skip hidden silkscreen
         If Silkscreen.IsHidden Then
@@ -503,57 +530,65 @@ Begin
         //Offset := MilsToCoord(200);
         //Board.GraphicalView_ZoomOnRect(Cmp.x-BestFilterSize,Cmp.y+BestFilterSize+Offset,Cmp.x+BestFilterSize,Cmp.y-BestFilterSize+Offset);
 
-        For xoff := -1 to 1 Do
+        While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
         Begin
-             For yoff := -1 to 1 Do
-             Begin
-                // Change Autoposition on Silkscreen
-                For i := 0 to 8 Do
-                Begin
-                     StartT := GetMilliSecondTime();
+              For xoff := -1 to 1 Do
+              Begin
+                   For yoff := -1 to 1 Do
+                   Begin
+                        // Change Autoposition on Silkscreen
+                        For i := 0 to 8 Do
+                        Begin
+                             StartT := GetMilliSecondTime();
 
-                     NextAutoP := GetNextAutoPosition(i);
-                     Cmp.ChangeNameAutoposition := NextAutoP;
-                     AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Cmp.Layer));
+                             NextAutoP := GetNextAutoPosition(i);
+                             Cmp.ChangeNameAutoposition := NextAutoP;
+                             AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Cmp.Layer));
 
-                     // Component Overlap Detection
-                     If IsOverObj(Board, Silkscreen, eComponentBodyObject, BestFilterSize)
-                     Then
-                     Begin
-                          StopT := GetMilliSecondTime();
-                          DeltaT := StopT - StartT;
-                          Continue;
-                     End
-                     // Silkscreen RefDes Overlap Detection
-                     Else If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) Then
-                     Begin
-                          Continue;
-                     End
-                     // Silkscreen Tracks Overlap Detection
-                     Else If IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) Then
-                     Begin
-                          Continue;
-                     End
-                     Else If IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize) Then
-                     Begin
-                          Continue;
-                     End
-                     // Outside Board Edge
-                     Else If Is_Outside_Board(Board, Silkscreen) Then
-                     Begin
-                          Continue;
-                     End
-                     Else
-                     Begin
-                          Placed := True;
-                          Inc(PlaceCnt);
-                          Break;
-                     End;
-                End;
+                             // Component Overlap Detection
+                             If IsOverObj(Board, Silkscreen, eComponentBodyObject, BestFilterSize)
+                             Then
+                             Begin
+                                  StopT := GetMilliSecondTime();
+                                  DeltaT := StopT - StartT;
+                                  Continue;
+                             End
+                             // Silkscreen RefDes Overlap Detection
+                             Else If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) Then
+                             Begin
+                                  Continue;
+                             End
+                             // Silkscreen Tracks Overlap Detection
+                             Else If IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) Then
+                             Begin
+                                  Continue;
+                             End
+                             Else If IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize) Then
+                             Begin
+                                  Continue;
+                             End
+                             // Outside Board Edge
+                             Else If Is_Outside_Board(Board, Silkscreen) Then
+                             Begin
+                                  Continue;
+                             End
+                             Else
+                             Begin
+                                  Placed := True;
+                                  Inc(PlaceCnt);
+                                  Break;
+                             End;
+                        End;
 
-                  if Placed then break;
-             End;
-             if Placed then break;
+                        if Placed then break;
+                   End;
+                   if Placed then break;
+              End;
+              if Placed or ((CoordToMils(Silkscreen.Size) - 5) < MIN_SILK_SIZE) then break;
+
+              // No placement found, try reducing silkscreen size
+              Silkscreen.Size := Silkscreen.Size - MilsToCoord(5);
+              Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
         End;
 
 
