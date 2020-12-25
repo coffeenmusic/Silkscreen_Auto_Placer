@@ -463,7 +463,7 @@ Var
     StartT, StopT, DeltaT : Integer;
     Placed : Boolean;
     PlaceCnt : Integer;
-    xoff, yoff : Integer;
+    xinc, yinc, xoff, yoff : Integer;
     SlkSize : Integer;
 Begin
     // Retrieve the current board
@@ -502,7 +502,7 @@ Begin
 
         SlkSize := Get_Silk_Size(Silkscreen);
         Silkscreen.Size := MilsToCoord(SlkSize);
-        Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
+        Silkscreen.Width := 2*(Silkscreen.Size/10);
 
         // TODO: Automatically adjust silk size based on component size,
         //       if no placement can be made, reduce size, but have a minimum size
@@ -529,12 +529,13 @@ Begin
         // Zoom To Selected Component
         //Offset := MilsToCoord(200);
         //Board.GraphicalView_ZoomOnRect(Cmp.x-BestFilterSize,Cmp.y+BestFilterSize+Offset,Cmp.x+BestFilterSize,Cmp.y-BestFilterSize+Offset);
-
         While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
         Begin
-              For xoff := -1 to 1 Do
+              xoff := 0;
+              For xinc := 0 to 5 Do
               Begin
-                   For yoff := -1 to 1 Do
+                   yoff := 0;
+                   For yinc := 0 to 5 Do
                    Begin
                         // Change Autoposition on Silkscreen
                         For i := 0 to 8 Do
@@ -581,8 +582,14 @@ Begin
                         End;
 
                         if Placed then break;
+
+                        yoff := yoff*-1; // Toggle sign
+                        if yoff >= 0 then yoff := yoff + 1; // Toggle increment
                    End;
                    if Placed then break;
+
+                   xoff := xoff*-1; // Toggle sign
+                   if xoff >= 0 then xoff := xoff +1; // Toggle increment
               End;
               if Placed or ((CoordToMils(Silkscreen.Size) - 5) < MIN_SILK_SIZE) then break;
 
@@ -600,10 +607,10 @@ Begin
 
         AllLayersInvisible(Board);
 
-        //if (Count Mod 1000) = 0 then
-        //begin
-        //    Name := Silkscreen.Text;
-        //end;
+        if (Count Mod 100) = 0 then
+        begin
+            Name := Silkscreen.Text;
+        end;
 
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
