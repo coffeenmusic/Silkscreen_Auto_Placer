@@ -516,6 +516,7 @@ begin
      // Skip hidden silkscreen
      If Silkscreen.IsHidden Then
      Begin
+          result := False;
           Exit;
      End;
 
@@ -526,15 +527,18 @@ begin
      Silkscreen.Size := MilsToCoord(SlkSize);
      Silkscreen.Width := 2*(Silkscreen.Size/10);
 
+     // If not placed, reduce silkscreen size
      While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
      Begin
           xoff := 0;
+          // If not placed, increment x offset
           For xinc := 0 to 5 Do
           Begin
                yoff := 0;
+               // If not placed, increment y offset
                For yinc := 0 to 5 Do
                Begin
-                    // Change Autoposition on Silkscreen
+                    // If not placed Change Autoposition on Silkscreen
                     For i := 0 to 8 Do
                     Begin
                          NextAutoP := GetNextAutoPosition(i);
@@ -604,7 +608,9 @@ Var
     Cmp           : IPCB_Component;
     Silkscreen    : IPCB_Text;
     Iterator      : IPCB_BoardIterator;
-    Count, PlaceCnt : Integer;
+    Count, PlaceCnt, NotPlaceCnt, i : Integer;
+    NotPlaced     : TObjectList;
+    Rotation : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -621,21 +627,55 @@ Begin
     Iterator.AddFilter_LayerSet(MkSet(eTopLayer));
     Iterator.AddFilter_Method(eProcessAll);
 
+    NotPlaced := TObjectList.Create;
+
     // Search for component body objects and get their Name, Kind, Area and OverallHeight values
-    Count := 0; PlaceCnt := 0; 
+    Count := 0; PlaceCnt := 0; NotPlaceCnt := 0;
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-
         Silkscreen := Cmp.Name;
 
         if (Place_Silkscreen(Board, Silkscreen)) then
         begin
             Inc(PlaceCnt);
+        end
+        else
+        begin
+             Inc(NotPlaceCnt);
+            NotPlaced.Add(Silkscreen);
         end;
+
+        //If NotPlaceCnt > 2 Then Break;
 
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
+    End;
+
+    // Try placement again with different rotation
+    For i := 0 To NotPlaced.Count - 1 Do
+    Begin
+        Silkscreen := NotPlaced[i];
+        Rotation := Silkscreen.Rotation;
+        If (Rotation = 0) or (Rotation = 360) Then
+        Begin
+            Silkscreen.Rotation := 90;
+        End
+        Else If (Rotation = 90) or (Rotation = 270) Then
+        Begin
+            Silkscreen.Rotation := 0;
+        End;
+
+        // If not placed, reset the rotation back to its original value
+        If Place_Silkscreen(Board, Silkscreen) Then
+        Begin
+             Inc(PlaceCnt);
+        End
+        Else
+        Begin
+             Silkscreen.Rotation := Rotation;
+        End;
+        Silkscreen.Selected := True;
     End;
 
     Board.BoardIterator_Destroy(Iterator);
