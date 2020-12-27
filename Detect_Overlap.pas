@@ -7,6 +7,9 @@
 
 //TODO:
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
+//      - Improve Get_Silk_Size function by creating equation that solves for any size
+//      - Remove test code
+//      - Create list of silkscreen not placed
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
@@ -64,6 +67,34 @@ begin
     result := False;
 end;
 
+// Check if two layers are the on the same side of the board. Handle different layer names.
+function Is_Same_Side(Layer1: Integer, Layer2: Integer): Boolean;
+begin
+    // Top Layer
+    if (Layer1 = eTopLayer) or (Layer1 = eTopOverlay) then
+    begin
+        if (Layer2 <> eBottomLayer) and (Layer2 <> eBottomOverlay) then
+        begin
+              result := True; Exit; // return True
+        end;
+    end
+    // Bottom Layer
+    else if (Layer1 = eBottomLayer) or (Layer1 = eBottomOverlay) then
+    begin
+         if (Layer2 <> eTopLayer) and (Layer2 <> eTopOverlay) then
+         begin
+              result := True; Exit; // return True
+         end;
+    end
+    // Multi Layer
+    else if (Layer1 = eMultiLayer) or (Layer2 = eMultiLayer) then
+    begin
+         result := True; Exit;
+    end;
+
+    result := False;
+end;
+
 // Guess silkscreen size based on component size
 function Get_Silk_Size(Slk: IPCB_Text): Integer;
 var
@@ -116,14 +147,15 @@ begin
     Layer1 := Layer2String(Obj1.Layer);
     Layer2 := Layer2String(Obj2.Layer);
 
-    if (Obj1.ObjectId = eTextObject) then
+    if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) then
     begin
          if Obj1.IsDesignator then
          begin
-              if Obj1.Text = 'P3V3A-DSW' then
-              begin
-                  Name1 := Obj1.Text;
-              end;
+             if (Obj1.Text = 'C188') or (Obj2.Text = 'C188') then
+             begin
+                Obj2.Selected := True;
+                Obj2.Selected := False;
+             end;
          end;
     end;
 
@@ -149,22 +181,12 @@ begin
         result := False;
         Exit; // Continue
     End;
+
     // Continue if Layers Dont Match
-    if Layer1 = 'Top Overlay' then
+    if not Is_Same_Side(Obj1.Layer, Obj2.Layer) then
     begin
-       if (Layer2 <> 'Top Layer') and (Layer2 <> 'Top Overlay') then
-       begin
-            result := False;
-            Exit; // Continue
-       end;
-    end;
-    if Layer1 = 'Bottom Overlay' then
-    begin
-       if (Layer2 <> 'Bottom Layer') and (Layer2 <> 'Bottom Overlay') then
-       begin
-            result := False;
-            Exit; // Continue
-       end;
+         result := False;
+         Exit; // Continue
     end;
 
     Rect1 := Get_Obj_Rect(Obj1);
@@ -475,38 +497,114 @@ begin
   Silk.MoveByXY(dx + MilsToCoord(X_offset), dy + MilsToCoord(Y_offset));
 end;
 
-{..............................................................................}
-Procedure DetectOverlap;
-Const
-    SKIP_HIDDEN = True;
-    AUTOSAVE_CNT = 50;
+function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
+const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
     MIN_SILK_SIZE = 25; // [mils]
-    FILTER_SIZE_MILS = 50; // [mils]
+    FILTER_SIZE_MILS = 100; // [mils]
+var
+    NextAutoP      : Integer;
+    Placed : Boolean;
+    xinc, yinc, xoff, yoff : Integer;
+    SlkSize : Integer;
+    FilterSize : Integer;
+    Count, i      : Integer;
+begin
+     result := True;
+     Placed := False;
+
+     // Skip hidden silkscreen
+     If Silkscreen.IsHidden Then
+     Begin
+          Exit;
+     End;
+
+     FilterSize := MilsToCoord(FILTER_SIZE_MILS);
+
+     // Get Silkscreen Size
+     SlkSize := Get_Silk_Size(Silkscreen);
+     Silkscreen.Size := MilsToCoord(SlkSize);
+     Silkscreen.Width := 2*(Silkscreen.Size/10);
+
+     While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
+     Begin
+          xoff := 0;
+          For xinc := 0 to 5 Do
+          Begin
+               yoff := 0;
+               For yinc := 0 to 5 Do
+               Begin
+                    // Change Autoposition on Silkscreen
+                    For i := 0 to 8 Do
+                    Begin
+                         NextAutoP := GetNextAutoPosition(i);
+                         Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+                         AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Silkscreen.Component.Layer));
+
+                         // Component Overlap Detection
+                         If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
+                         Begin
+                              Continue;
+                         End
+                         // Silkscreen RefDes Overlap Detection
+                         Else If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
+                         Begin
+                              Continue;
+                         End
+                         // Silkscreen Tracks Overlap Detection
+                         Else If IsOverObj(Board, Silkscreen, eTrackObject, FilterSize) Then
+                         Begin
+                              Continue;
+                         End
+                         Else If IsOverObj(Board, Silkscreen, ePadObject, FilterSize) Then
+                         Begin
+                              Continue;
+                         End
+                         // Outside Board Edge
+                         Else If Is_Outside_Board(Board, Silkscreen) Then
+                         Begin
+                              Continue;
+                         End
+                         Else
+                         Begin
+                              Placed := True;
+                              Exit;
+                         End;
+                    End;
+
+                    yoff := yoff*-1; // Toggle sign
+                    if yoff >= 0 then yoff := yoff + 1; // Toggle increment
+               End;
+
+               xoff := xoff*-1; // Toggle sign
+               if xoff >= 0 then xoff := xoff +1; // Toggle increment
+          End;
+
+          if Placed or ((CoordToMils(Silkscreen.Size) - 5) < MIN_SILK_SIZE) then break;
+
+          // No placement found, try reducing silkscreen size
+          Silkscreen.Size := Silkscreen.Size - MilsToCoord(5);
+          Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
+     End;
+
+     if not Placed then
+     begin
+          // Move off board for now
+          Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
+          Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000); // Move to board origin
+     end;
+
+     result := False;
+end;
+
+{..............................................................................}
+Procedure DetectOverlap;
 Var
     Board         : IPCB_Board;
     Cmp           : IPCB_Component;
     Silkscreen    : IPCB_Text;
     Iterator      : IPCB_BoardIterator;
-    ReportDocument : IServerDocument;
-    Count, i, n      : Integer;
-    SilkX,SilkY   : Integer;
-    FilterSize,BestFilterSize,Offset : Integer;
-    Dataset,Slk_Data,Pad_Data,Trk_Data,Cmp_Data,UsedCmps : TStringList;
-    PrevLayer      : TV6_Layer;
-    AutoP          : TTextAutoposition;
-    NextAutoP      : Integer;
-    usedCmp,RefDes  : TPCBString;
-    xorigin, yorigin : Integer;
-    Silk_Rect        : TCoordRect;
-    Silk_L           : Integer;
-    IsOver           : Boolean;
-    Name : TPCBString;
-    StartT, StopT, DeltaT : Integer;
-    Placed : Boolean;
-    PlaceCnt : Integer;
-    xinc, yinc, xoff, yoff : Integer;
-    SlkSize : Integer;
+    Count, PlaceCnt : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -523,151 +621,18 @@ Begin
     Iterator.AddFilter_LayerSet(MkSet(eTopLayer));
     Iterator.AddFilter_Method(eProcessAll);
 
-    FilterSize := MilsToCoord(FILTER_SIZE_MILS);
-
-    //Client.SendMessage('PCB:ManageLayerSets', 'SetIndex=5' , 255, Client.CurrentView);
-    //AllLayersInvisible(Board);
-    //PrevLayer := String2Layer('Top Layer');
-
-    xorigin := Board.XOrigin;
-    yorigin := Board.YOrigin;
-
     // Search for component body objects and get their Name, Kind, Area and OverallHeight values
-    Count := 0;
-    PlaceCnt := 0;
+    Count := 0; PlaceCnt := 0; 
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-        Placed := False;
 
         Silkscreen := Cmp.Name;
 
-        // Skip hidden silkscreen
-        If Silkscreen.IsHidden Then
-        Begin
-             Cmp := Iterator.NextPCBObject;
-             Continue;
-        End;
-
-        SilkX := Silkscreen.XLocation;
-        SilkY := Silkscreen.YLocation;
-
-        Silkscreen.Selected := True;
-
-        // Get Silkscreen Size
-        SlkSize := Get_Silk_Size(Silkscreen);
-        Silkscreen.Size := MilsToCoord(SlkSize);
-        Silkscreen.Width := 2*(Silkscreen.Size/10);
-
-        // TODO: Automatically adjust silk size based on component size,
-        //       if no placement can be made, reduce size, but have a minimum size
-
-        // Set visible layers
-        //Board.LayerIsDisplayed[Cmp.Layer] := True;
-        //Board.LayerIsDisplayed[Silkscreen.Layer] := True;
-        //PrevLayer := SetVisibleLayerSideUp(Cmp.Layer, PrevLayer);
-
-        //BestFilterSize := GetBestCmpFilterSize(Cmp, FilterSize);
-        BestFilterSize := FilterSize;
-
-        //Client.SendMessage('PCB:Zoom', 'Action=Selected' , 255, Client.CurrentView);
-
-        // Zoom To Selected Component
-        //Offset := MilsToCoord(200);
-        //Board.GraphicalView_ZoomOnRect(Cmp.x-BestFilterSize,Cmp.y+BestFilterSize+Offset,Cmp.x+BestFilterSize,Cmp.y-BestFilterSize+Offset);
-        While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
-        Begin
-              xoff := 0;
-              For xinc := 0 to 5 Do
-              Begin
-                   yoff := 0;
-                   For yinc := 0 to 5 Do
-                   Begin
-                        // Change Autoposition on Silkscreen
-                        For i := 0 to 8 Do
-                        Begin
-                             StartT := GetMilliSecondTime();
-
-                             NextAutoP := GetNextAutoPosition(i);
-                             Cmp.ChangeNameAutoposition := NextAutoP;
-                             AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Cmp.Layer));
-
-                             // Component Overlap Detection
-                             If IsOverObj(Board, Silkscreen, eComponentBodyObject, BestFilterSize)
-                             Then
-                             Begin
-                                  StopT := GetMilliSecondTime();
-                                  DeltaT := StopT - StartT;
-                                  Continue;
-                             End
-                             // Silkscreen RefDes Overlap Detection
-                             Else If IsOverObj(Board, Silkscreen, eTextObject, BestFilterSize) Then
-                             Begin
-                                  Continue;
-                             End
-                             // Silkscreen Tracks Overlap Detection
-                             Else If IsOverObj(Board, Silkscreen, eTrackObject, BestFilterSize) Then
-                             Begin
-                                  Continue;
-                             End
-                             Else If IsOverObj(Board, Silkscreen, ePadObject, BestFilterSize) Then
-                             Begin
-                                  Continue;
-                             End
-                             // Outside Board Edge
-                             Else If Is_Outside_Board(Board, Silkscreen) Then
-                             Begin
-                                  Continue;
-                             End
-                             Else
-                             Begin
-                                  Placed := True;
-                                  Inc(PlaceCnt);
-
-                                  Board.GraphicalView_ZoomOnRect(Silkscreen.XLocation-BestFilterSize*8,Silkscreen.YLocation+BestFilterSize*8,Silkscreen.XLocation+BestFilterSize*8,Silkscreen.YLocation-BestFilterSize*8);
-                                  Silkscreen.Selected := True;
-                                  Silkscreen.Selected := False;
-                                  Break;
-                             End;
-                        End;
-
-                        if Placed then break;
-
-                        yoff := yoff*-1; // Toggle sign
-                        if yoff >= 0 then yoff := yoff + 1; // Toggle increment
-                   End;
-                   if Placed then break;
-
-                   xoff := xoff*-1; // Toggle sign
-                   if xoff >= 0 then xoff := xoff +1; // Toggle increment
-              End;
-              if Placed or ((CoordToMils(Silkscreen.Size) - 5) < MIN_SILK_SIZE) then break;
-
-              // No placement found, try reducing silkscreen size
-              Silkscreen.Size := Silkscreen.Size - MilsToCoord(5);
-              Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
-        End;
-
-
-
-        // Undo Autoposition Change
-        //Cmp.ChangeNameAutoposition := eAutoPos_Manual;
-        //Silkscreen.MoveToXY(SilkX, SilkY);
-        Silkscreen.Selected := False;
-
-        AllLayersInvisible(Board);
-
-        if not Placed then  // Test Code
+        if (Place_Silkscreen(Board, Silkscreen)) then
         begin
-             Silkscreen.Selected := True; // Test Code
-             Board.GraphicalView_ZoomOnRect(Silkscreen.XLocation-BestFilterSize*8,Silkscreen.YLocation+BestFilterSize*8,Silkscreen.XLocation+BestFilterSize*8,Silkscreen.YLocation-BestFilterSize*8);
-             Name := Silkscreen.Text; // Test Code
-             Silkscreen.Selected := False;
-
-             // Move off board for now
-             Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
-             Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000); // Move to board origin
-        end;                         // Test Code
+            Inc(PlaceCnt);
+        end;
 
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
