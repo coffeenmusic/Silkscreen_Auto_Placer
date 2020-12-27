@@ -9,7 +9,7 @@
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
 //      - Improve Get_Silk_Size function by creating equation that solves for any size
 //      - Remove test code
-//      - Create list of silkscreen not placed
+//      - Rename Macro Filenames
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
@@ -378,43 +378,6 @@ begin
        eAutoPos_Manual : result := 'Manual';
   else     result := 'Unkown';
   end;
-end;
-
-function GetBestCmpFilterSize(Cmp: IPCB_Component, Filter_Size: Integer): Integer;
-var
-    FiltL,FiltR,FiltT,FiltB : TCoord;
-    Cmp_Rect      : TCoordRect;
-    CmpL,CmpR,CmpT,CmpB : Integer;
-    deltL,deltR,deltT,deltB : Integer;
-    newFilterSize : Integer;
-begin
-    newFilterSize := Filter_Size;
-
-    FiltL := Cmp.x - Filter_Size; // Rectangle Left Filter Starting Point
-    FiltR := Cmp.x + Filter_Size; // Rectangle Right Filter Stopping Point
-    FiltB := Cmp.y - Filter_Size; // Rectangle Bottom Filter Starting Point
-    FiltT := Cmp.y + Filter_Size; // Rectangle Top Filter Stopping Point
-
-    Cmp_Rect := Cmp.BoundingRectangleNoNameComment;
-    CmpL := Cmp_Rect.Left;
-    CmpR := Cmp_Rect.Right;
-    CmpT := Cmp_Rect.Top;
-    CmpB := Cmp_Rect.Bottom;
-
-    If (CmpL < FiltL) or (CmpR > FiltR) or (CmpT > FiltT) or (CmpB < FiltB) Then
-    Begin
-        deltL := abs(CmpL - Cmp.x);
-        deltR := abs(CmpR - Cmp.x);
-        deltT := abs(CmpT - Cmp.y);
-        deltB := abs(CmpB - Cmp.y);
-
-        newFilterSize := deltL;
-        If deltR > newFilterSize Then newFilterSize := deltR;
-        If deltT > newFilterSize Then newFilterSize := deltT;
-        If deltB > newFilterSize Then newFilterSize := deltB;
-        newFilterSize := newFilterSize + newFilterSize*0.05; // Add 5% border
-    End;
-    result := newFilterSize;
 end;
 
 // Disable visibility for all layers
