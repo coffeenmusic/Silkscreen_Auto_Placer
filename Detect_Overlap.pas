@@ -7,20 +7,13 @@
 
 //TODO:
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
-//      - Improve Get_Silk_Size function by creating equation that solves for any size
 //      - Remove test code
 //      - Rename Macro Filenames
+//      - Remove unused functions
+//      - Change main iterator back to allLayers
+//      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
-
-Const
-    MACRODIR = 'C:\Users\stephen.thompson\Documents\Macros\Altium\Silk_GoodBad_Iterator_NoImage\';
-    CSVFILE = 'Main_Dataset.csv';
-    USEDCMPCSV = 'Cmp_Used_List.csv';
-    SLKCSVFILE = 'Slk_Dataset.csv';
-    PADCSVFILE = 'Pad_Dataset.csv';
-    TRKCSVFILE = 'Trk_Dataset.csv';
-    CMPCSVFILE = 'Cmp_Dataset.csv';
 
 // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
@@ -96,32 +89,20 @@ begin
 end;
 
 // Guess silkscreen size based on component size
-function Get_Silk_Size(Slk: IPCB_Text): Integer;
+function Get_Silk_Size(Slk: IPCB_Text, Min_Size: Integer): Integer;
 var
    Rect    : TCoordRect;
    area : Integer;
+   size : Integer;
 begin
     // Stroke Width & Text Height
     Rect := Get_Obj_Rect(Slk.Component);
     area := CoordToMils(Rect.Right - Rect.Left)*CoordToMils(Rect.Top - Rect.Bottom);
 
-    if area <= 10000 then
-    begin
-         result := 30;
-         Exit;
-    end
-    else if area <= 25000 then
-    begin
-         result := 50;
-         Exit;
-    end
-    else if area <= 100000 then
-    begin
-         result := 70;
-         Exit;
-    end;
+    size := Int((82*area)/(16700 + area));
+    if size < Min_Size then size := Min_Size;
 
-    result := 100;
+    result := size;
 end;
 
 // Checks if 2 objects are overlapping on the PCB
@@ -151,10 +132,12 @@ begin
     begin
          if Obj1.IsDesignator then
          begin
-             if (Obj1.Text = 'C188') or (Obj2.Text = 'C188') then
+             if (Obj1.Text = 'FAN-PWM') or (Obj2.Text = 'FAN-PWM') then
              begin
                 Obj2.Selected := True;
                 Obj2.Selected := False;
+                Name1 := Obj1.Text;
+                Name2 := Obj2.Text;
              end;
          end;
     end;
@@ -311,6 +294,17 @@ begin
             end;
         end;
 
+        if (Obj.ObjectId = eTextObject) then
+        begin
+             if Obj.IsDesignator then
+             begin
+                  if (Obj.Text = 'FAN-PWM') or (Obj.Text = 'R704') then
+                  begin
+                       Name1 := Obj.Text;
+                  end;
+             end;
+         end;
+
         //Obj.Selected := True;
 
         // Check if Silkscreen is overlapping with other object (component/pad/silk)
@@ -463,7 +457,9 @@ end;
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
-    MIN_SILK_SIZE = 25; // [mils]
+    MIN_SILK_SIZE = 30; // [mils]
+    ABS_MIN_SILK_SIZE = 25; // [mils]
+    SILK_SIZE_DELTA = 5; // [mils] Decrement silkscreen size by this value if not placed
     FILTER_SIZE_MILS = 100; // [mils]
 var
     NextAutoP      : Integer;
@@ -476,6 +472,12 @@ begin
      result := True;
      Placed := False;
 
+     if (Silkscreen.Text = 'R704') then
+     begin
+          Silkscreen.Selected := True;
+          Silkscreen.Selected := False;
+     end;
+
      // Skip hidden silkscreen
      If Silkscreen.IsHidden Then
      Begin
@@ -486,12 +488,12 @@ begin
      FilterSize := MilsToCoord(FILTER_SIZE_MILS);
 
      // Get Silkscreen Size
-     SlkSize := Get_Silk_Size(Silkscreen);
+     SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
      Silkscreen.Size := MilsToCoord(SlkSize);
      Silkscreen.Width := 2*(Silkscreen.Size/10);
 
      // If not placed, reduce silkscreen size
-     While CoordToMils(Silkscreen.Size) > MIN_SILK_SIZE Do
+     While CoordToMils(Silkscreen.Size) >= ABS_MIN_SILK_SIZE Do
      Begin
           xoff := 0;
           // If not placed, increment x offset
@@ -547,21 +549,24 @@ begin
                if xoff >= 0 then xoff := xoff +1; // Toggle increment
           End;
 
-          if Placed or ((CoordToMils(Silkscreen.Size) - 5) < MIN_SILK_SIZE) then break;
+          if Placed or ((CoordToMils(Silkscreen.Size) - SILK_SIZE_DELTA) < ABS_MIN_SILK_SIZE) then
+          begin
+               Break;
+          end;
 
           // No placement found, try reducing silkscreen size
-          Silkscreen.Size := Silkscreen.Size - MilsToCoord(5);
-          Silkscreen.Width := 2*(Silkscreen.Size/10) - 10000;
+          Silkscreen.Size := Silkscreen.Size - MilsToCoord(SILK_SIZE_DELTA);
+          Silkscreen.Width := Int(2*(Silkscreen.Size/10) - 10000); // Width needs to change relative to size
      End;
 
      if not Placed then
      begin
+          result := False;
+
           // Move off board for now
           Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
           Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000); // Move to board origin
      end;
-
-     result := False;
 end;
 
 {..............................................................................}
@@ -606,10 +611,8 @@ Begin
         else
         begin
              Inc(NotPlaceCnt);
-            NotPlaced.Add(Silkscreen);
+             NotPlaced.Add(Silkscreen);
         end;
-
-        //If NotPlaceCnt > 2 Then Break;
 
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
