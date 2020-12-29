@@ -1,15 +1,11 @@
 // How to use:
-//     1) Turn off single layer mode. SHIFT + s until you can see multiple layers.
-//     2) Verify Board view is not flipped.
-//     3) From PCB window, click DXP toolbar: DXP-->Run Script...-->Select 'Iterate Component Silkscreen'--> OK
+//     1) Run script from pcb layout
 
 // HALT EXECUTION: ctrl + PauseBreak
 
 //TODO:
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
-//      - Remove test code
 //      - Rename Macro Filenames
-//      - Remove unused functions
 //      - Change main iterator back to allLayers
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 Uses
@@ -119,42 +115,11 @@ var
     Rect1, Rect2    : TCoordRect;
     L, R, T, B  : Integer;
     L2, R2, T2, B2  : Integer;
-    Name1, Name2 : TPCBString;
-    Hidden : Boolean;
-    OverX, OverY : Boolean;
-    Layer1, Layer2 : TPCBString;
     Delta1, Delta2 : Integer;
-    L3, R3, T3, B3  : Integer;
-    L4, R4, T4, B4  : Integer;
-    xorigin, yorigin : Integer;
 begin
-    Name1 := Obj1.Identifier;
-    Name2 := Obj2.Identifier;
-    Hidden := Obj2.IsHidden;
-    Layer1 := Layer2String(Obj1.Layer);
-    Layer2 := Layer2String(Obj2.Layer);
-
-    if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) then
-    begin
-         if Obj1.IsDesignator then
-         begin
-             if (Obj1.Text = 'FAN-PWM') or (Obj2.Text = 'FAN-PWM') then
-             begin
-                Obj2.Selected := True;
-                Obj2.Selected := False;
-                Name1 := Obj1.Text;
-                Name2 := Obj2.Text;
-             end;
-         end;
-    end;
-
-    // If object equals itself, return False
+    // If silkscreen object equals itself, return False
     if (Obj1.ObjectId = Obj2.ObjectId) and (Obj1.ObjectId = eTextObject) then
     begin
-         Name1 := Obj1.Text;
-         Name2 := Obj2.Text;
-         //Obj2.Selected := True;
-         //Obj2.Selected := False;
          if Obj1.IsDesignator and Obj2.IsDesignator then
          begin
               if Obj1.Text = Obj2.Text then
@@ -164,6 +129,7 @@ begin
               end;
          end;
     end;
+
     // Continue if Hidden
     If Obj1.IsHidden or Obj2.IsHidden Then
     Begin
@@ -196,31 +162,12 @@ begin
     T2 := Rect2.Top + Delta2;
     B2 := Rect2.Bottom - Delta2;
 
-    xorigin := Board.XOrigin; // Test Code
-    yorigin := Board.YOrigin; // Test Code
-
-    L3 := L - xorigin; // Test Code
-    R3 := R - xorigin; // Test Code
-    T3 := T - yorigin; // Test Code
-    B3 := B - yorigin; // Test Code
-
-    L4 := L2 - xorigin; // Test Code
-    R4 := R2 - xorigin; // Test Code
-    T4 := T2 - yorigin; // Test Code
-    B4 := B2 - yorigin; // Test Code
-
-
-
     if (B > T2) or (T < B2) or (L > R2) or (R < L2) then
     begin
          result := False;
          Exit; // Equivalent to return in C
     end;
-
-    //Obj2.Selected := True;
     result := True;
-    //Rect2 := Get_Obj_Rect(Obj2);
-    //Obj2.Selected := False;
 end;
 
 // Returns correct layer set given the object being used
@@ -250,24 +197,7 @@ var
     Rect : TCoordRect;
     RectL,RectR,RectB,RectT : TCoord;
     RegIter       : Boolean; // Regular Iterator
-    Name1, Name2 : TPCBString;
-    Layer1, Layer2 : TPCBString;
-    L,R,B,T : TCoord;
 begin
-    Rect := Get_Obj_Rect(Slk);
-    RectL := Rect.Left - Filter_Size;
-    RectR := Rect.Right + Filter_Size;
-    RectT := Rect.Top + Filter_Size;
-    RectB := Rect.Bottom - Filter_Size;
-
-    //L := RectL - Board.XOrigin;
-    //R := RectR - Board.XOrigin;
-    //B := RectB - Board.YOrigin;
-    //T := RectT - Board.YOrigin;
-
-
-    //Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
-
     // Spatial Iterators only work with Primitive Objects and not group objects like eComponentObject and dimensions
     if (ObjID = eComponentObject) then
     begin
@@ -279,13 +209,18 @@ begin
     end
     else
     begin
+        Rect := Get_Obj_Rect(Slk);
+        RectL := Rect.Left - Filter_Size;
+        RectR := Rect.Right + Filter_Size;
+        RectT := Rect.Top + Filter_Size;
+        RectB := Rect.Bottom - Filter_Size;
+
         Iterator := Board.SpatialIterator_Create;
         Iterator.AddFilter_ObjectSet(MkSet(ObjID));
         Iterator.AddFilter_LayerSet(Get_LayerSet(Slk.Layer, ObjID));
         Iterator.AddFilter_Area(RectL, RectB, RectR, RectT);
         RegIter := False;
     end;
-    Name1 := Slk.Component.Identifier;
 
     // Iterate through components or pads or silkscreen etc. Depends on which object is passed in.
     Obj := Iterator.FirstPCBObject;
@@ -308,16 +243,6 @@ begin
                  Continue;
             end;
         end;
-
-        if (Obj.ObjectId = eTextObject) then
-        begin
-             if (Obj.Text = 'FPGA-TP1') or (Obj.Text = 'FPGA-TP2') or (Obj.Identifier = 'FPGA-TP1') then
-             begin
-                  Name1 := Obj.Text;
-             end;
-         end;
-
-        //Obj.Selected := True;
 
         // Check if Silkscreen is overlapping with other object (component/pad/silk)
         If Is_Overlapping(Board, Slk, Obj) Then
@@ -367,44 +292,6 @@ begin
          Slk := Iterator.NextPCBObject;
     End;
     Board.BoardIterator_Destroy(Iterator);
-end;
-
-// Converts position index to its string equivalent.
-function AutoPosToStr(iteration : Integer): TPCBString;
-begin
-  Case iteration of
-       eAutoPos_CenterRight : result := 'Center_Right';
-       eAutoPos_TopCenter : result := 'Top_Center';
-       eAutoPos_CenterLeft : result := 'Center_Left';
-       eAutoPos_BottomCenter : result := 'Bottom_Center';
-       eAutoPos_TopLeft : result := 'Top_Left';
-       eAutoPos_TopRight : result := 'Top_Right';
-       eAutoPos_BottomLeft : result := 'Bottom_Left';
-       eAutoPos_BottomRight : result := 'Bottom_Right';
-       eAutoPos_Manual : result := 'Manual';
-  else     result := 'Unkown';
-  end;
-end;
-
-// Disable visibility for all layers
-function AllLayersInvisible(Board: IPCB_Board);
-var
-  LayerIterator : IPCB_LayerObjectIterator;
-begin
-  LayerIterator := Board.LayerIterator;
-  While LayerIterator.Next Do
-    Board.LayerIsDisplayed[LayerIterator.LayerObject.V6_LayerID] := False;
-end;
-
-// Flip Board So Visible Layer Is not Inverted
-function SetVisibleLayerSideUp(CurrentLayer: TV6_Layer, PrevLayer: TV6_Layer): TV6_Layer;
-begin
-    If CurrentLayer <> PrevLayer Then
-        Begin
-            Client.SendMessage('PCB:FlipBoard', 'Action=FlipBoard' , 255, Client.CurrentView);
-            PrevLayer := CurrentLayer;
-        End;
-    result := PrevLayer;
 end;
 
 function GetNextAutoPosition(iteration : Integer): Integer;
@@ -487,12 +374,6 @@ begin
      result := True;
      Placed := False;
 
-     if (Silkscreen.Text = 'R704') then
-     begin
-          Silkscreen.Selected := True;
-          Silkscreen.Selected := False;
-     end;
-
      // Skip hidden silkscreen
      If Silkscreen.IsHidden Then
      Begin
@@ -549,6 +430,7 @@ begin
                          Begin
                               Continue;
                          End
+                         // PLACED
                          Else
                          Begin
                               Placed := True;
@@ -611,15 +493,8 @@ Begin
     Iterator        := Board.BoardIterator_Create;
     Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
     //Iterator.AddFilter_IPCB_LayerSet(LayerSet.AllLayers);
-    //Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
-    Iterator.AddFilter_LayerSet(MkSet(eTopLayer));
+    Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
     Iterator.AddFilter_Method(eProcessAll);
-
-    //If Not (Board.ChooseRectangleByCorners('Please select the first corner', 'Please select the final corner', X1,Y1,X2,Y2)) Then Exit;
-    //Iterator := Board.SpatialIterator_Create;
-    //Iterator.AddFilter_ObjectSet(MkSet(eComponentBodyObject));
-    //Iterator.AddFilter_IPCB_LayerSet(LayerSet.AllLayers);
-    //Iterator.AddFilter_Area(X1, Y1, X2, Y2);
 
     NotPlaced := TObjectList.Create;
 
@@ -643,7 +518,6 @@ Begin
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
     End;
-    //Board.SpatialIterator_Destroy(Iterator);
     Board.BoardIterator_Destroy(Iterator);
 
     // Try placement again with different rotation
