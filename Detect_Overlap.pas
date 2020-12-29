@@ -61,8 +61,14 @@ begin
 end;
 
 // Check if two layers are the on the same side of the board. Handle different layer names.
-function Is_Same_Side(Layer1: Integer, Layer2: Integer): Boolean;
+function Is_Same_Side(Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
+var
+   Layer1, Layer2 : Integer;
 begin
+    Layer1 := Obj1.Layer; Layer2 := Obj2.Layer;
+    if Obj1.ObjectId = eComponentBodyObject then Layer1 := Obj1.Component.Layer;
+    if Obj2.ObjectId = eComponentBodyObject then Layer2 := Obj2.Component.Layer;
+
     // Top Layer
     if (Layer1 = eTopLayer) or (Layer1 = eTopOverlay) then
     begin
@@ -166,7 +172,7 @@ begin
     End;
 
     // Continue if Layers Dont Match
-    if not Is_Same_Side(Obj1.Layer, Obj2.Layer) then
+    if not Is_Same_Side(Obj1, Obj2) then
     begin
          result := False;
          Exit; // Continue
@@ -232,7 +238,7 @@ begin
      end
      else if (ObjID = eComponentBodyObject) then
      begin
-         result := MkSet(eMechanical3);
+         result := MkSet(eMechanical1, eMechanical2, eMechanical3, eMechanical13);
      end;
 end;
 
@@ -246,6 +252,7 @@ var
     RegIter       : Boolean; // Regular Iterator
     Name1, Name2 : TPCBString;
     Layer1, Layer2 : TPCBString;
+    L,R,B,T : TCoord;
 begin
     Rect := Get_Obj_Rect(Slk);
     RectL := Rect.Left - Filter_Size;
@@ -253,12 +260,20 @@ begin
     RectT := Rect.Top + Filter_Size;
     RectB := Rect.Bottom - Filter_Size;
 
+    //L := RectL - Board.XOrigin;
+    //R := RectR - Board.XOrigin;
+    //B := RectB - Board.YOrigin;
+    //T := RectT - Board.YOrigin;
+
+
+    //Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
+
     // Spatial Iterators only work with Primitive Objects and not group objects like eComponentObject and dimensions
     if (ObjID = eComponentObject) then
     begin
         Iterator        := Board.BoardIterator_Create;
         Iterator.AddFilter_ObjectSet(MkSet(ObjID));
-        Iterator.AddFilter_IPCB_LayerSet(Get_LayerSet(Slk.Layer, ObjID));
+        Iterator.AddFilter_LayerSet(Get_LayerSet(Slk.Layer, ObjID));
         Iterator.AddFilter_Method(eProcessAll);
         RegIter := True;
     end
@@ -296,12 +311,9 @@ begin
 
         if (Obj.ObjectId = eTextObject) then
         begin
-             if Obj.IsDesignator then
+             if (Obj.Text = 'FPGA-TP1') or (Obj.Text = 'FPGA-TP2') or (Obj.Identifier = 'FPGA-TP1') then
              begin
-                  if (Obj.Text = 'FAN-PWM') or (Obj.Text = 'R704') then
-                  begin
-                       Name1 := Obj.Text;
-                  end;
+                  Name1 := Obj.Text;
              end;
          end;
 
@@ -450,8 +462,11 @@ begin
           dx := -d*flipx;
       End;
   End;
-
+  PCBServer.PreProcess;
+  PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
   Silk.MoveByXY(dx + MilsToCoord(X_offset), dy + MilsToCoord(Y_offset));
+  PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+  PCBServer.PostProcess;
 end;
 
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
@@ -564,8 +579,12 @@ begin
           result := False;
 
           // Move off board for now
+          PCBServer.PreProcess;
+          PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
           Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
-          Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000); // Move to board origin
+          Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000);
+          PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+          PCBServer.PostProcess;
      end;
 end;
 
@@ -573,12 +592,13 @@ end;
 Procedure DetectOverlap;
 Var
     Board         : IPCB_Board;
-    Cmp           : IPCB_Component;
     Silkscreen    : IPCB_Text;
+    Cmp        : IPCB_Component;
     Iterator      : IPCB_BoardIterator;
     Count, PlaceCnt, NotPlaceCnt, i : Integer;
     NotPlaced     : TObjectList;
     Rotation : Integer;
+    X1, X2, Y1, Y2: Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -594,6 +614,12 @@ Begin
     //Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
     Iterator.AddFilter_LayerSet(MkSet(eTopLayer));
     Iterator.AddFilter_Method(eProcessAll);
+
+    //If Not (Board.ChooseRectangleByCorners('Please select the first corner', 'Please select the final corner', X1,Y1,X2,Y2)) Then Exit;
+    //Iterator := Board.SpatialIterator_Create;
+    //Iterator.AddFilter_ObjectSet(MkSet(eComponentBodyObject));
+    //Iterator.AddFilter_IPCB_LayerSet(LayerSet.AllLayers);
+    //Iterator.AddFilter_Area(X1, Y1, X2, Y2);
 
     NotPlaced := TObjectList.Create;
 
@@ -617,11 +643,14 @@ Begin
         Inc(Count);
         Cmp := Iterator.NextPCBObject;
     End;
+    //Board.SpatialIterator_Destroy(Iterator);
+    Board.BoardIterator_Destroy(Iterator);
 
     // Try placement again with different rotation
     For i := 0 To NotPlaced.Count - 1 Do
     Begin
         Silkscreen := NotPlaced[i];
+
         Rotation := Silkscreen.Rotation;
         If (Rotation = 0) or (Rotation = 360) Then
         Begin
@@ -631,6 +660,7 @@ Begin
         Begin
             Silkscreen.Rotation := 0;
         End;
+
 
         // If not placed, reset the rotation back to its original value
         If Place_Silkscreen(Board, Silkscreen) Then
@@ -644,7 +674,7 @@ Begin
         Silkscreen.Selected := True;
     End;
 
-    Board.BoardIterator_Destroy(Iterator);
+    Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
 End;
 {..............................................................................}
 
