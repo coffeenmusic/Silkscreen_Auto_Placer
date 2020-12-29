@@ -270,7 +270,7 @@ begin
 end;
 
 // Moves silkscreen reference designators to board origin. Used as initialization step.
-function Move_Silk_Off_Board(Board: IPCB_Board);
+function Move_Silk_Off_Board(Board: IPCB_Board, OnlySelected : Boolean);
 var
     Iterator     : IPCB_SpatialIterator;
     Slk          : IPCB_Text;
@@ -286,9 +286,11 @@ begin
     Begin
          if Slk.IsDesignator then
          begin
-              Slk.Component.ChangeNameAutoposition := eAutoPos_Manual;
-              Slk.MoveToXY(Board.XOrigin, Board.YOrigin); // Move to board origin
-              Slk.Selected := False;
+             if OnlySelected and Slk.Component.Selected then
+             begin
+                 Slk.Component.ChangeNameAutoposition := eAutoPos_Manual;
+                 Slk.MoveToXY(Board.XOrigin, Board.YOrigin); // Move to board origin
+             end;
          end;
 
          Slk := Iterator.NextPCBObject;
@@ -484,13 +486,16 @@ Var
     NotPlaced     : TObjectList;
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
+    OnlySelected : Boolean;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
     If Board = Nil Then Exit;
 
+    OnlySelected := ConfirmNoYes('YES: Only place selected components silkscreen. NO: Place entire PCB.');
+
     // Initialize silk reference designators to board origin coordinates.
-    Move_Silk_Off_Board(Board);
+    Move_Silk_Off_Board(Board, OnlySelected);
 
     // Create the iterator that will look for Component Body objects only
     Iterator        := Board.BoardIterator_Create;
@@ -506,19 +511,22 @@ Begin
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-        Silkscreen := Cmp.Name;
+        if OnlySelected and Cmp.Selected then
+        begin
+            Silkscreen := Cmp.Name;
 
-        if (Place_Silkscreen(Board, Silkscreen)) then
-        begin
-            Inc(PlaceCnt);
-        end
-        else
-        begin
-             Inc(NotPlaceCnt);
-             NotPlaced.Add(Silkscreen);
+            if (Place_Silkscreen(Board, Silkscreen)) then
+            begin
+                Inc(PlaceCnt);
+            end
+            else
+            begin
+                Inc(NotPlaceCnt);
+                NotPlaced.Add(Silkscreen);
+            end;
+
+            Inc(Count);
         end;
-
-        Inc(Count);
         Cmp := Iterator.NextPCBObject;
     End;
     Board.BoardIterator_Destroy(Iterator);
@@ -549,8 +557,7 @@ Begin
              Silkscreen.Rotation := Rotation;
         End;
         Silkscreen.Selected := True;
-    End;
-    NotPlaced.Free;
+    End;   
 
     Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
     ShowMessage('Script execution complete.');
