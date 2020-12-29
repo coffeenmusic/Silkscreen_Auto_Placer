@@ -176,7 +176,7 @@ var
    TopBot : Integer;
 begin
      TopBot := eTopLayer;
-     if Layer2String(SlkLayer) = 'Bottom Overlay' then TopBot := eBottomLayer;
+     if (Layer2String(SlkLayer) = 'Bottom Overlay') then TopBot := eBottomLayer;
 
      result := MkSet(SlkLayer); // Default layer set
      if (ObjID = eComponentObject) or (ObjID = ePadObject) then
@@ -362,7 +362,7 @@ const
     MIN_SILK_SIZE = 30; // [mils]
     ABS_MIN_SILK_SIZE = 25; // [mils]
     SILK_SIZE_DELTA = 5; // [mils] Decrement silkscreen size by this value if not placed
-    FILTER_SIZE_MILS = 100; // [mils]
+    FILTER_SIZE_MILS = 5; // [mils]
 var
     NextAutoP      : Integer;
     Placed : Boolean;
@@ -475,11 +475,11 @@ Procedure DetectOverlap;
 Var
     Board         : IPCB_Board;
     Silkscreen    : IPCB_Text;
-    Cmp        : IPCB_Component;
+    Cmp           : IPCB_Component;
     Iterator      : IPCB_BoardIterator;
     Count, PlaceCnt, NotPlaceCnt, i : Integer;
     NotPlaced     : TObjectList;
-    Rotation : Integer;
+    Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
 Begin
     // Retrieve the current board
@@ -547,8 +547,10 @@ Begin
         End;
         Silkscreen.Selected := True;
     End;
+    NotPlaced.Free;
 
     Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
+    ShowMessage('Script execution complete.');
 End;
 {..............................................................................}
 
