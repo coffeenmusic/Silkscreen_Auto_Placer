@@ -152,8 +152,8 @@ begin
 
     // Neg/Pos padding margins
     Delta1 := 0; Delta2 := 0;
-    if (Obj1.ObjectId = eTextObject) and Obj1.IsDesignator then Delta1 := -SLKPAD;
-    if (Obj2.ObjectId = eTextObject) and Obj2.IsDesignator then Delta2 := -SLKPAD;
+    if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) and Obj1.IsDesignator then Delta1 := -SLKPAD;
+    if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) and Obj2.IsDesignator then Delta2 := -SLKPAD;
     if (Obj1.ObjectId = ePadObject) then Delta1 := PADPAD;
     if (Obj2.ObjectId = ePadObject) then Delta2 := PADPAD;
 
@@ -616,6 +616,7 @@ Begin
     btnChoice := messagedlg('Only place selected components silkscreen? NO: Place entire PCB', mtCustom, mbYesNoCancel, 0);
     If btnChoice = mrCancel Then Exit;
     If btnChoice = mrYes Then OnlySelected := True;
+
 
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
