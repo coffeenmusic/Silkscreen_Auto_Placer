@@ -54,6 +54,12 @@ DItemRevisionGUID=
 GenerateClassCluster=0
 DocumentUniqueId=
 
+[Generic_ScriptingSystemBreakpoints]
+ModuleName1=C:\Users\Stephen Thompson\Documents\Macros\Altium\AutoPlaceSilkscreen\AutoPlaceSilkscreen.pas
+Line1=261
+Condition1=
+Enabled1=True
+
 [OutputGroup1]
 Name=Netlist Outputs
 Description=

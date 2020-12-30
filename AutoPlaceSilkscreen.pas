@@ -606,12 +606,16 @@ Var
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
     OnlySelected, MoveSlkOverCmp : Boolean;
+    btnChoice : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
     If Board = Nil Then Exit;
 
-    OnlySelected := ConfirmNoYes('YES: Only place selected components silkscreen. NO: Place entire PCB.');
+    OnlySelected := False;
+    btnChoice := messagedlg('Only place selected components silkscreen? NO: Place entire PCB', mtCustom, mbYesNoCancel, 0);
+    If btnChoice = mrCancel Then Exit;
+    If btnChoice = mrYes Then OnlySelected := True;
 
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
