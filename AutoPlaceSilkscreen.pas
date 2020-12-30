@@ -7,9 +7,9 @@
 
 //TODO:
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
-//      - Rename Macro Filenames
 //      - Change main iterator back to allLayers
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
+//      - Option to move unplaced silkscreen on top of components at the end of the script?
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
@@ -199,6 +199,7 @@ var
     Rect : TCoordRect;
     RectL,RectR,RectB,RectT : TCoord;
     RegIter       : Boolean; // Regular Iterator
+    Name : TPCBString;
 begin
     // Spatial Iterators only work with Primitive Objects and not group objects like eComponentObject and dimensions
     if (ObjID = eComponentObject) then
@@ -246,11 +247,15 @@ begin
             end;
         end;
 
+        Try
         // Check if Silkscreen is overlapping with other object (component/pad/silk)
         If Is_Overlapping(Board, Slk, Obj) Then
         Begin
              result := True;
              Exit; // Equivalent to return in C
+        End;
+        Except
+             Name := Slk.Text;
         End;
 
         Obj := Iterator.NextPCBObject;
@@ -296,6 +301,26 @@ begin
          Slk := Iterator.NextPCBObject;
     End;
     Board.BoardIterator_Destroy(Iterator);
+end;
+
+function Move_Silk_Over_Comp(SlkList: TObjectList);
+var
+    Slk          : IPCB_Text;
+    i            : Integer;
+begin
+    PCBServer.PreProcess;
+    For i := 0 To SlkList.Count - 1 Do
+    Begin
+        Slk := SlkList[i];
+
+        PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
+
+        Slk.Component.ChangeNameAutoposition := eAutoPos_CenterCenter;
+
+        PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+    End;
+
+    PCBServer.PostProcess;
 end;
 
 function GetNextAutoPosition(iteration : Integer): Integer;
@@ -353,11 +378,30 @@ begin
           dx := -d*flipx;
       End;
   End;
-  //PCBServer.PreProcess;
-  //PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
   Silk.MoveByXY(dx + MilsToCoord(X_offset), dy + MilsToCoord(Y_offset));
-  //PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
-  //PCBServer.PostProcess;
+end;
+
+function Rotation_MatchSilk2Comp(Silk : IPCB_Text);
+var
+    r : Integer; // Component Rotation
+begin
+  r := Silk.Component.Rotation;
+
+  If (r = 0) or (r = 180) or (r = 360) Then
+  Begin
+       Silk.Rotation := 0;
+  End
+  Else If (r = 90) or (r = 270) Then
+  Begin
+       If Silk.Layer = eTopOverlay Then
+       Begin
+            Silk.Rotation := 90;
+       End
+       Else
+       Begin
+            Silk.Rotation := 270; // Bottom silk should be mirrored and therefore 270 instead of 90
+       End;
+  End;
 end;
 
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
@@ -367,7 +411,7 @@ const
     MIN_SILK_SIZE = 30; // [mils]
     ABS_MIN_SILK_SIZE = 25; // [mils]
     SILK_SIZE_DELTA = 5; // [mils] Decrement silkscreen size by this value if not placed
-    FILTER_SIZE_MILS = 5; // [mils]
+    FILTER_SIZE_MILS = 0; // [mils] Additional delta to check surrounding objects. Adds delta to object rectangle.
 var
     NextAutoP      : Integer;
     Placed : Boolean;
@@ -475,6 +519,72 @@ begin
      end;
 end;
 
+// Try different rotations on squarish components
+function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList): Integer;
+const
+     MAX_RATIO = 1.2; // Component is almost square, so we are safe to try a different rotation
+var
+    Slk          : IPCB_Text;
+    rect         : TCoordRect;
+    i, l, w      : Integer;
+    PlaceCnt     : Integer;
+    Rotation     : Integer;
+begin
+    PCBServer.PreProcess;
+
+    PlaceCnt := 0;
+    For i := 0 To SlkList.Count - 1 Do
+    Begin
+        Slk := SlkList[i];
+
+        rect := Get_Obj_Rect(Slk);
+        l := rect.Right - rect.Left;
+        w := rect.Top - rect.Bottom;
+        if w < l then
+        begin
+            w := rect.Right - rect.Left;
+            l := rect.Top - rect.Bottom;
+        end;
+
+        // Silk rotations that don't match component rotations don't look right, but
+        // this is less of a concern with more square components
+        if ((w/l) > MAX_RATIO) or ((w/l) < (1/MAX_RATIO)) then Continue;
+
+
+        PCBServer.PreProcess;
+        PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
+
+        Rotation := Slk.Rotation;
+        If (Rotation = 0) or (Rotation = 180) or (Rotation = 360) Then
+        Begin
+            Slk.Rotation := 90;
+        End
+        Else If (Rotation = 90) or (Rotation = 270) Then
+        Begin
+            Slk.Rotation := 0;
+        End
+        Else
+        Begin
+            Slk.Rotation := Slk.Component.Rotation;
+        End;
+
+        // If not placed, reset the rotation back to its original value
+        If Place_Silkscreen(Board, Slk) Then
+        Begin
+             Inc(PlaceCnt);
+        End
+        Else
+        Begin
+             Slk.Rotation := Rotation; // Reset Original Rotation
+        End;
+
+        PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+        PCBServer.PostProcess;
+    End;
+
+    PCBServer.PostProcess;
+end;
+
 {..............................................................................}
 Procedure RunPlaceSilkscreen;
 Var
@@ -486,7 +596,7 @@ Var
     NotPlaced     : TObjectList;
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
-    OnlySelected : Boolean;
+    OnlySelected, MoveSlkOverCmp : Boolean;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -517,6 +627,7 @@ Begin
         if (OnlySelected and Cmp.Selected) or (not OnlySelected) then
         begin
             Silkscreen := Cmp.Name;
+            Rotation_MatchSilk2Comp(Silkscreen); // Matches silk rotation to component rotation
 
             PCBServer.PreProcess;
             PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
@@ -540,42 +651,17 @@ Begin
     End;
     Board.BoardIterator_Destroy(Iterator);
 
-    // Try placement again with different rotation
-    For i := 0 To NotPlaced.Count - 1 Do
-    Begin
-        Silkscreen := NotPlaced[i];
-
-        PCBServer.PreProcess;
-        PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
-
-        Rotation := Silkscreen.Rotation;
-        If (Rotation = 0) or (Rotation = 360) Then
-        Begin
-            Silkscreen.Rotation := 90;
-        End
-        Else If (Rotation = 90) or (Rotation = 270) Then
-        Begin
-            Silkscreen.Rotation := 0;
-        End;
-
-        // If not placed, reset the rotation back to its original value
-        If Place_Silkscreen(Board, Silkscreen) Then
-        Begin
-             Inc(PlaceCnt);
-        End
-        Else
-        Begin
-             Silkscreen.Rotation := Rotation;
-        End;
-
-        PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
-        PCBServer.PostProcess;
-    End;
+    // Try different rotation for squarish components
+    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced);
 
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
 
-    ShowMessage('Script execution complete.');
+    // Move each silkscreen reference designator over its respective component?
+    MoveSlkOverCmp := ConfirmNoYes('Would you like to move UNPLACED silkscreen on top of components? No: Will leave unplaced silkscreen off the board.');
+    If MoveSlkOverCmp Then Move_Silk_Over_Comp(NotPlaced);
+
+    ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of ' + IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt/Count)*100)) + '%');
 End;
 {..............................................................................}
 
