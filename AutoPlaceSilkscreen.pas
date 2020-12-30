@@ -298,7 +298,7 @@ begin
              if (OnlySelected and Slk.Component.Selected) or (not OnlySelected) then
              begin
                  Slk.Component.ChangeNameAutoposition := eAutoPos_Manual;
-                 Slk.MoveToXY(Board.XOrigin, Board.YOrigin); // Move to board origin
+                 Slk.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin - 1000000); // Move slightly off board origin
              end;
          end;
 
@@ -522,7 +522,7 @@ begin
           PCBServer.PreProcess;
           PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
           Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
-          Silkscreen.MoveToXY(Board.XOrigin - 500000, Board.YOrigin + 500000);
+          Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
           PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
           PCBServer.PostProcess;
      end;
