@@ -112,7 +112,8 @@ end;
 // Checks if 2 objects are overlapping on the PCB
 function Is_Overlapping(Board: IPCB_Board, Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
 const
-    PAD = 40000; // Allowed Overlap = 4 mil
+    SLKPAD = 40000; // Allowed Overlap = 4 mil
+    PADPAD = 10000; // Margin beyond pad = 1 mil
 var
     Rect1, Rect2    : TCoordRect;
     L, R, T, B  : Integer;
@@ -149,9 +150,12 @@ begin
     Rect1 := Get_Obj_Rect(Obj1);
     Rect2 := Get_Obj_Rect(Obj2);
 
+    // Neg/Pos padding margins
     Delta1 := 0; Delta2 := 0;
-    if (Obj1.ObjectId = eTextObject) and Obj1.IsDesignator then Delta1 := -PAD;
-    if (Obj2.ObjectId = eTextObject) and Obj2.IsDesignator then Delta2 := -PAD;
+    if (Obj1.ObjectId = eTextObject) and Obj1.IsDesignator then Delta1 := -SLKPAD;
+    if (Obj2.ObjectId = eTextObject) and Obj2.IsDesignator then Delta2 := -SLKPAD;
+    if (Obj1.ObjectId = ePadObject) then Delta1 := PADPAD;
+    if (Obj2.ObjectId = ePadObject) then Delta2 := PADPAD;
 
     // Get Bounding Area For Both Objects
     L := Rect1.Left - Delta1;
@@ -508,6 +512,11 @@ begin
      if not Placed then
      begin
           result := False;
+
+          // Reset Silkscreen Size
+          SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+          Silkscreen.Size := MilsToCoord(SlkSize);
+          Silkscreen.Width := 2*(Silkscreen.Size/10);
 
           // Move off board for now
           PCBServer.PreProcess;
