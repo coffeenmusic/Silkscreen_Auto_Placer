@@ -54,12 +54,6 @@ DItemRevisionGUID=
 GenerateClassCluster=0
 DocumentUniqueId=
 
-[Generic_ScriptingSystemBreakpoints]
-ModuleName1=C:\Users\Stephen Thompson\Documents\Macros\Altium\Silk_GoodBad_Iterator_NoImage\Test_Code.pas
-Line1=80
-Condition1=
-Enabled1=True
-
 [OutputGroup1]
 Name=Netlist Outputs
 Description=

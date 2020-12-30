@@ -286,7 +286,7 @@ begin
     Begin
          if Slk.IsDesignator then
          begin
-             if OnlySelected and Slk.Component.Selected then
+             if (OnlySelected and Slk.Component.Selected) or (not OnlySelected) then
              begin
                  Slk.Component.ChangeNameAutoposition := eAutoPos_Manual;
                  Slk.MoveToXY(Board.XOrigin, Board.YOrigin); // Move to board origin
@@ -353,11 +353,11 @@ begin
           dx := -d*flipx;
       End;
   End;
-  PCBServer.PreProcess;
-  PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
+  //PCBServer.PreProcess;
+  //PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
   Silk.MoveByXY(dx + MilsToCoord(X_offset), dy + MilsToCoord(Y_offset));
-  PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
-  PCBServer.PostProcess;
+  //PCBServer.SendMessageToRobots(Silk.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+  //PCBServer.PostProcess;
 end;
 
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
@@ -494,6 +494,9 @@ Begin
 
     OnlySelected := ConfirmNoYes('YES: Only place selected components silkscreen. NO: Place entire PCB.');
 
+    // set cursor to waiting.
+    Screen.Cursor      := crHourGlass;
+
     // Initialize silk reference designators to board origin coordinates.
     Move_Silk_Off_Board(Board, OnlySelected);
 
@@ -511,9 +514,12 @@ Begin
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-        if OnlySelected and Cmp.Selected then
+        if (OnlySelected and Cmp.Selected) or (not OnlySelected) then
         begin
             Silkscreen := Cmp.Name;
+
+            PCBServer.PreProcess;
+            PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
 
             if (Place_Silkscreen(Board, Silkscreen)) then
             begin
@@ -524,6 +530,9 @@ Begin
                 Inc(NotPlaceCnt);
                 NotPlaced.Add(Silkscreen);
             end;
+
+            PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+            PCBServer.PostProcess;
 
             Inc(Count);
         end;
@@ -536,6 +545,9 @@ Begin
     Begin
         Silkscreen := NotPlaced[i];
 
+        PCBServer.PreProcess;
+        PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
+
         Rotation := Silkscreen.Rotation;
         If (Rotation = 0) or (Rotation = 360) Then
         Begin
@@ -546,7 +558,6 @@ Begin
             Silkscreen.Rotation := 0;
         End;
 
-
         // If not placed, reset the rotation back to its original value
         If Place_Silkscreen(Board, Silkscreen) Then
         Begin
@@ -556,10 +567,14 @@ Begin
         Begin
              Silkscreen.Rotation := Rotation;
         End;
-        Silkscreen.Selected := True;
-    End;   
 
-    Client.SendMessage('PCB:Zoom', 'Action=Redraw' , 255, Client.CurrentView);
+        PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_EndModify , c_NoEventData);
+        PCBServer.PostProcess;
+    End;
+
+    // Restore cursor to normal
+    Screen.Cursor          := crArrow;
+
     ShowMessage('Script execution complete.');
 End;
 {..............................................................................}
