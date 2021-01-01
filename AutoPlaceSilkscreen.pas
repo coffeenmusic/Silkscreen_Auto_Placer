@@ -7,7 +7,6 @@
 
 //TODO:
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
-//      - Change main iterator back to allLayers
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 //      - Option to move unplaced silkscreen on top of components at the end of the script?
 Uses
@@ -627,7 +626,6 @@ Begin
     // Create the iterator that will look for Component Body objects only
     Iterator        := Board.BoardIterator_Create;
     Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
-    //Iterator.AddFilter_IPCB_LayerSet(LayerSet.AllLayers);
     Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
     Iterator.AddFilter_Method(eProcessAll);
 
