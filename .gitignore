@@ -1,0 +1,4 @@
+*.PcbDoc*
+History/
+__Previews/
+*.csv
