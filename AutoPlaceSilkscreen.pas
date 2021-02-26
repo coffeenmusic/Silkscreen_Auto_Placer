@@ -407,7 +407,7 @@ begin
   End;
 end;
 
-function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
+function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text, Use_Body: Boolean): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
     OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
@@ -458,13 +458,9 @@ begin
                          Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
                          AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Silkscreen.Component.Layer));
 
-                         // Component Overlap Detection
-                         If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
-                         Begin
-                              Continue;
-                         End
+
                          // Silkscreen RefDes Overlap Detection
-                         Else If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
+                         If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -479,6 +475,11 @@ begin
                          End
                          // Outside Board Edge
                          Else If Is_Outside_Board(Board, Silkscreen) Then
+                         Begin
+                              Continue;
+                         End
+                         // Component Overlap Detection
+                         Else If Use_Body and IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -528,7 +529,7 @@ begin
 end;
 
 // Try different rotations on squarish components
-function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList): Integer;
+function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList, Use_Body: Boolean): Integer;
 const
      MAX_RATIO = 1.2; // Component is almost square, so we are safe to try a different rotation
 var
@@ -577,7 +578,7 @@ begin
         End;
 
         // If not placed, reset the rotation back to its original value
-        If Place_Silkscreen(Board, Slk) Then
+        If Place_Silkscreen(Board, Slk, Use_Body) Then
         Begin
              Inc(PlaceCnt);
         End
@@ -606,6 +607,7 @@ Var
     X1, X2, Y1, Y2: Integer;
     OnlySelected, MoveSlkOverCmp : Boolean;
     btnChoice : Integer;
+    Use_Body : Boolean;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
@@ -615,6 +617,9 @@ Begin
     btnChoice := messagedlg('Only place selected components silkscreen? NO: Place entire PCB', mtCustom, mbYesNoCancel, 0);
     If btnChoice = mrCancel Then Exit;
     If btnChoice = mrYes Then OnlySelected := True;
+
+    // Ask user if they want to use component body
+    Use_Body := ConfirmNoYes('Would you like to keep silkscreen away from component bodies? Sometimes silk should be under bodies like shields, M.2 cards, etc. Saying NO will still avoid pads & other silk.');
 
 
     // set cursor to waiting.
@@ -644,7 +649,7 @@ Begin
             PCBServer.PreProcess;
             PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
 
-            if (Place_Silkscreen(Board, Silkscreen)) then
+            if (Place_Silkscreen(Board, Silkscreen, Use_Body)) then
             begin
                 Inc(PlaceCnt);
             end
@@ -664,7 +669,7 @@ Begin
     Board.BoardIterator_Destroy(Iterator);
 
     // Try different rotation for squarish components
-    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced);
+    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced, Use_Body);
 
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
