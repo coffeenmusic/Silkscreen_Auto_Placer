@@ -9,6 +9,7 @@
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 //      - Option to move unplaced silkscreen on top of components at the end of the script?
+
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
@@ -594,8 +595,13 @@ begin
     PCBServer.PostProcess;
 end;
 
+Procedure RunGUI;
+Begin
+    Form_PlaceSilk.ShowModal;
+End;
+
 {..............................................................................}
-Procedure RunPlaceSilkscreen;
+function PlaceSilkscreen(Place_Selected: Boolean, Place_OverComp: Boolean);
 Var
     Board         : IPCB_Board;
     Silkscreen    : IPCB_Text;
@@ -605,28 +611,20 @@ Var
     NotPlaced     : TObjectList;
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
-    OnlySelected, MoveSlkOverCmp : Boolean;
-    btnChoice : Integer;
     Use_Body : Boolean;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
     If Board = Nil Then Exit;
 
-    OnlySelected := False;
-    btnChoice := messagedlg('Only place selected components silkscreen? NO: Place entire PCB', mtCustom, mbYesNoCancel, 0);
-    If btnChoice = mrCancel Then Exit;
-    If btnChoice = mrYes Then OnlySelected := True;
-
     // Ask user if they want to use component body
     Use_Body := ConfirmNoYes('Would you like to keep silkscreen away from component bodies? Sometimes silk should be under bodies like shields, M.2 cards, etc. Saying NO will still avoid pads & other silk.');
-
 
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
 
     // Initialize silk reference designators to board origin coordinates.
-    Move_Silk_Off_Board(Board, OnlySelected);
+    Move_Silk_Off_Board(Board, Place_Selected);
 
     // Create the iterator that will look for Component Body objects only
     Iterator        := Board.BoardIterator_Create;
@@ -641,7 +639,7 @@ Begin
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-        if (OnlySelected and Cmp.Selected) or (not OnlySelected) then
+        if (Place_Selected and Cmp.Selected) or (not(Place_Selected)) then
         begin
             Silkscreen := Cmp.Name;
             Rotation_MatchSilk2Comp(Silkscreen); // Matches silk rotation to component rotation
@@ -674,12 +672,23 @@ Begin
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
 
-    // Move each silkscreen reference designator over its respective component?
-    MoveSlkOverCmp := ConfirmNoYes('Would you like to move UNPLACED silkscreen on top of components? No: Will leave unplaced silkscreen off the board.');
-    If MoveSlkOverCmp Then Move_Silk_Over_Comp(NotPlaced);
+    // Move each silkscreen reference designator over its respective component
+    If Place_OverComp Then Move_Silk_Over_Comp(NotPlaced);
 
     ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of ' + IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt/Count)*100)) + '%');
 End;
 {..............................................................................}
 
-{..............................................................................}
+procedure TForm_PlaceSilk.BTN_RunClick(Sender: TObject);
+var
+     Place_Selected : Boolean;
+     Place_OverComp : Boolean;
+begin
+     Place_Selected := RG_Filter.ItemIndex = 1;
+     Place_OverComp := RG_Failures.ItemIndex = 0;
+
+     Close;
+
+     PlaceSilkscreen(Place_Selected, Place_OverComp);
+end;
+
