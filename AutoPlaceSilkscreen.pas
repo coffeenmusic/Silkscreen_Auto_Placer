@@ -13,6 +13,9 @@
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
+Var
+    AllowUnderList: TStringList;
+
 // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
 var
@@ -195,6 +198,26 @@ begin
      end;
 end;
 
+function Allow_Under(Cmp : IPCB_Component, AllowUnderList: TStringList):Boolean;
+var
+    refdes : TPCB_String;
+    i : Integer;
+begin
+    if AllowUnderList <> nil then
+    begin
+        For i := 0 to AllowUnderList.Count - 1 do
+        begin
+            refdes := AllowUnderList.Get(i);
+            if Cmp.Name.Text = refdes then
+            begin
+                result := True;
+                exit;
+            end;
+        end;
+    end;
+    result := False;
+end;
+
 // Get components for surrounding area
 function IsOverObj(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
 var
@@ -244,7 +267,9 @@ begin
         if Obj.ObjectId = eComponentBodyObject then
         begin
             Obj := Obj.Component;
-            if Obj.Name.Layer <> Slk.Layer then
+
+            // Allow under are user defined reference designators that can be ignored
+            if (Allow_Under(Obj, AllowUnderList)) or (Obj.Name.Layer <> Slk.Layer) then
             begin
                  Obj := Iterator.NextPCBObject;
                  Continue;
@@ -408,7 +433,7 @@ begin
   End;
 end;
 
-function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text, Use_Body: Boolean): Boolean;
+function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
     OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
@@ -480,7 +505,7 @@ begin
                               Continue;
                          End
                          // Component Overlap Detection
-                         Else If Use_Body and IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
+                         Else If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -530,7 +555,7 @@ begin
 end;
 
 // Try different rotations on squarish components
-function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList, Use_Body: Boolean): Integer;
+function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList): Integer;
 const
      MAX_RATIO = 1.2; // Component is almost square, so we are safe to try a different rotation
 var
@@ -579,7 +604,7 @@ begin
         End;
 
         // If not placed, reset the rotation back to its original value
-        If Place_Silkscreen(Board, Slk, Use_Body) Then
+        If Place_Silkscreen(Board, Slk) Then
         Begin
              Inc(PlaceCnt);
         End
@@ -601,7 +626,7 @@ Begin
 End;
 
 {..............................................................................}
-function PlaceSilkscreen(Place_Selected: Boolean, Place_OverComp: Boolean);
+function Main(Place_Selected: Boolean, Place_OverComp: Boolean, AllowUnderList: TStringList);
 Var
     Board         : IPCB_Board;
     Silkscreen    : IPCB_Text;
@@ -611,14 +636,10 @@ Var
     NotPlaced     : TObjectList;
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
-    Use_Body : Boolean;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
     If Board = Nil Then Exit;
-
-    // Ask user if they want to use component body
-    Use_Body := ConfirmNoYes('Would you like to keep silkscreen away from component bodies? Sometimes silk should be under bodies like shields, M.2 cards, etc. Saying NO will still avoid pads & other silk.');
 
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
@@ -647,7 +668,7 @@ Begin
             PCBServer.PreProcess;
             PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
 
-            if (Place_Silkscreen(Board, Silkscreen, Use_Body)) then
+            if (Place_Silkscreen(Board, Silkscreen)) then
             begin
                 Inc(PlaceCnt);
             end
@@ -667,7 +688,7 @@ Begin
     Board.BoardIterator_Destroy(Iterator);
 
     // Try different rotation for squarish components
-    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced, Use_Body);
+    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced);
 
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
@@ -679,16 +700,49 @@ Begin
 End;
 {..............................................................................}
 
+function Split(Delimiter: Char; Text: TPCBString; ListOfStrings: TStrings);
+begin
+   ListOfStrings.Clear;
+   ListOfStrings.Delimiter       := Delimiter;
+   ListOfStrings.StrictDelimiter := True; // Requires D2006 or newer.
+   ListOfStrings.DelimitedText   := Text;
+end;
+
+// Unfortunately [rfReplaceAll] keeps throwing errors, so I had to write this function
+function RemoveNewLines(Text: TPCBString):TPCBString;
+var
+     strlen : Integer;
+     NewStr : TPCBString;
+begin
+     strlen := length(Text);
+     NewStr := StringReplace(Text, #13#10, ',', rfReplaceAll);
+     While length(NewStr) <> strlen do
+     begin
+         strlen := length(NewStr);
+         NewStr := StringReplace(NewStr, #13#10, ',', rfReplaceAll);
+         NewStr := StringReplace(NewStr, ' ', '', rfReplaceAll);
+     end;
+     result := NewStr;
+end;
+
 procedure TForm_PlaceSilk.BTN_RunClick(Sender: TObject);
 var
      Place_Selected : Boolean;
      Place_OverComp : Boolean;
+     StrNoSpace : TPCBString;
+     i : Integer;
+     strlen : Integer;
 begin
+     Form_PlaceSilk.Close;
+     Close;
+
      Place_Selected := RG_Filter.ItemIndex = 1;
      Place_OverComp := RG_Failures.ItemIndex = 0;
 
-     Close;
+     AllowUnderList := TStringList.Create;
+     StrNoSpace := RemoveNewLines(MEM_AllowUnder.Text);
+     Split(',', StrNoSpace, AllowUnderList);
 
-     PlaceSilkscreen(Place_Selected, Place_OverComp);
+     Main(Place_Selected, Place_OverComp, AllowUnderList);
+     AllowUnderList.Free;
 end;
-

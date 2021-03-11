@@ -2,8 +2,8 @@ object Form_PlaceSilk: TForm_PlaceSilk
   Left = 0
   Top = 0
   Caption = 'Silkscreen Auto Placer'
-  ClientHeight = 471
-  ClientWidth = 586
+  ClientHeight = 406
+  ClientWidth = 463
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
@@ -35,63 +35,32 @@ object Form_PlaceSilk: TForm_PlaceSilk
     Items.Strings = (
       'Center Over Components'
       'Place Off Board (Bottom Left)')
-    TabOrder = 3
+    TabOrder = 2
   end
   object GB_AllowUnder: TGroupBox
-    Left = 216
+    Left = 224
     Top = 16
-    Width = 320
+    Width = 216
     Height = 336
     Caption = 'Allow Silk Under Specified Components'
     TabOrder = 1
-  end
-  object SG_AllowUnder: TStringGrid
-    Left = 229
-    Top = 39
-    Width = 283
-    Height = 273
-    Hint = 'Add Component Reference Designators'
-    ColCount = 1
-    DefaultColWidth = 256
-    FixedCols = 0
-    RowCount = 25
-    TabOrder = 2
-    ColWidths = (
-      256)
-    RowHeights = (
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24
-      24)
+    object MEM_AllowUnder: TMemo
+      Left = 11
+      Top = 27
+      Width = 185
+      Height = 301
+      Lines.Strings = (
+        'MEM_AllowUnder')
+      TabOrder = 0
+    end
   end
   object BTN_Run: TButton
-    Left = 455
-    Top = 423
+    Left = 367
+    Top = 367
     Width = 75
     Height = 25
     Caption = 'Run'
-    TabOrder = 4
+    TabOrder = 3
     OnClick = BTN_RunClick
   end
 end
