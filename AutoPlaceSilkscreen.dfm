@@ -52,6 +52,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
       Lines.Strings = (
         'MEM_AllowUnder')
       TabOrder = 0
+      OnEnter = MEM_AllowUnderEnter
     end
   end
   object BTN_Run: TButton

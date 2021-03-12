@@ -13,6 +13,8 @@
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
+Const
+    TextBoxInitStr = 'Example:'+#13#10+'J3'+#13#10+'SH1';
 Var
     AllowUnderList: TStringList;
 
@@ -622,6 +624,7 @@ end;
 
 Procedure RunGUI;
 Begin
+    MEM_AllowUnder.Text := TextBoxInitStr;
     Form_PlaceSilk.ShowModal;
 End;
 
@@ -746,3 +749,10 @@ begin
      Main(Place_Selected, Place_OverComp, AllowUnderList);
      AllowUnderList.Free;
 end;
+
+// When user first enters textbox, clear it
+procedure TForm_PlaceSilk.MEM_AllowUnderEnter(Sender: TObject);
+begin
+    if MEM_AllowUnder.Text = TextBoxInitStr then MEM_AllowUnder.Text := '';
+end;
+
