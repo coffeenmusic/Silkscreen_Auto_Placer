@@ -14,7 +14,8 @@ Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
 
 Const
-    TextBoxInitStr = 'Example:'+#13#10+'J3'+#13#10+'SH1';
+    NEWLINECODE = #13#10;
+    TEXTBOXINIT = 'Example:'+NEWLINECODE+'J3'+NEWLINECODE+'SH1';
 Var
     AllowUnderList: TStringList;
 
@@ -624,7 +625,7 @@ end;
 
 Procedure RunGUI;
 Begin
-    MEM_AllowUnder.Text := TextBoxInitStr;
+    MEM_AllowUnder.Text := TEXTBOXINIT;
     Form_PlaceSilk.ShowModal;
 End;
 
@@ -718,11 +719,11 @@ var
      NewStr : TPCBString;
 begin
      strlen := length(Text);
-     NewStr := StringReplace(Text, #13#10, ',', rfReplaceAll);
+     NewStr := StringReplace(Text, NEWLINECODE, ',', rfReplaceAll);
      While length(NewStr) <> strlen do
      begin
          strlen := length(NewStr);
-         NewStr := StringReplace(NewStr, #13#10, ',', rfReplaceAll);
+         NewStr := StringReplace(NewStr, NEWLINECODE, ',', rfReplaceAll);
          NewStr := StringReplace(NewStr, ' ', '', rfReplaceAll);
      end;
      result := NewStr;
@@ -734,7 +735,6 @@ var
      Place_OverComp : Boolean;
      StrNoSpace : TPCBString;
      i : Integer;
-     strlen : Integer;
 begin
      Form_PlaceSilk.Close;
      Close;
@@ -753,6 +753,6 @@ end;
 // When user first enters textbox, clear it
 procedure TForm_PlaceSilk.MEM_AllowUnderEnter(Sender: TObject);
 begin
-    if MEM_AllowUnder.Text = TextBoxInitStr then MEM_AllowUnder.Text := '';
+    if MEM_AllowUnder.Text = TEXTBOXINIT then MEM_AllowUnder.Text := '';
 end;
 
