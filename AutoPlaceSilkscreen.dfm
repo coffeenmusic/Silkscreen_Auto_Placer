@@ -64,4 +64,11 @@ object Form_PlaceSilk: TForm_PlaceSilk
     TabOrder = 3
     OnClick = BTN_RunClick
   end
+  object ProgressBar1: TProgressBar
+    Left = 12
+    Top = 369
+    Width = 340
+    Height = 22
+    TabOrder = 4
+  end
 end

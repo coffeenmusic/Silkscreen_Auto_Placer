@@ -438,6 +438,22 @@ begin
   End;
 end;
 
+function Get_Iterator_Count(Iterator: IPCB_BoardIterator): Integer;
+var
+    cnt : Integer;
+    cmp : IPCB_Component;
+begin
+  cnt := 0;
+
+  cmp := Iterator.FirstPCBObject;
+  While cmp <> NIL Do
+  Begin
+       Inc(cnt);
+       cmp := Iterator.NextPCBObject;
+  End;
+  result := cnt;
+end;
+
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
@@ -661,6 +677,10 @@ Begin
 
     NotPlaced := TObjectList.Create;
 
+    ProgressBar1.Position := 0;
+    ProgressBar1.Update;
+    ProgressBar1.Max := Get_Iterator_Count(Iterator);
+
     // Search for component body objects and get their Name, Kind, Area and OverallHeight values
     Count := 0; PlaceCnt := 0; NotPlaceCnt := 0;
     Cmp := Iterator.FirstPCBObject;
@@ -690,6 +710,8 @@ Begin
             Inc(Count);
         end;
         Cmp := Iterator.NextPCBObject;
+        ProgressBar1.Position := ProgressBar1.Position + 1;
+        ProgressBar1.Update;
     End;
     Board.BoardIterator_Destroy(Iterator);
 
@@ -738,9 +760,6 @@ var
      StrNoSpace : TPCBString;
      i : Integer;
 begin
-     Form_PlaceSilk.Close;
-     Close;
-
      Place_Selected := RG_Filter.ItemIndex = 1;
      Place_OverComp := RG_Failures.ItemIndex = 0;
 
@@ -750,6 +769,7 @@ begin
 
      Main(Place_Selected, Place_OverComp, AllowUnderList);
      AllowUnderList.Free;
+     Close;
 end;
 
 // When user first enters textbox, clear it
