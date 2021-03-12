@@ -9,6 +9,8 @@
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 //      - Option to move unplaced silkscreen on top of components at the end of the script?
+//      - Add Mechanical Layer options to GUI
+//      - Use Courtyard layer tracks
 
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
@@ -210,8 +212,8 @@ begin
     begin
         For i := 0 to AllowUnderList.Count - 1 do
         begin
-            refdes := AllowUnderList.Get(i);
-            if Cmp.Name.Text = refdes then
+            refdes := LowerCase(AllowUnderList.Get(i));
+            if LowerCase(Cmp.Name.Text) = refdes then
             begin
                 result := True;
                 exit;
