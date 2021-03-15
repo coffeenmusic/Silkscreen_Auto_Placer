@@ -9,8 +9,17 @@
 //      - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
 //      - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
 //      - Option to move unplaced silkscreen on top of components at the end of the script?
+//      - Add Mechanical Layer options to GUI
+//      - Use Courtyard layer tracks
+
 Uses
   Winapi, ShellApi, Win32.NTDef, Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, System, System.Diagnostics;
+
+Const
+    NEWLINECODE = #13#10;
+    TEXTBOXINIT = 'Example:'+NEWLINECODE+'J3'+NEWLINECODE+'SH1';
+Var
+    AllowUnderList: TStringList;
 
 // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
@@ -194,6 +203,26 @@ begin
      end;
 end;
 
+function Allow_Under(Cmp : IPCB_Component, AllowUnderList: TStringList):Boolean;
+var
+    refdes : TPCB_String;
+    i : Integer;
+begin
+    if AllowUnderList <> nil then
+    begin
+        For i := 0 to AllowUnderList.Count - 1 do
+        begin
+            refdes := LowerCase(AllowUnderList.Get(i));
+            if LowerCase(Cmp.Name.Text) = refdes then
+            begin
+                result := True;
+                exit;
+            end;
+        end;
+    end;
+    result := False;
+end;
+
 // Get components for surrounding area
 function IsOverObj(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
 var
@@ -243,7 +272,9 @@ begin
         if Obj.ObjectId = eComponentBodyObject then
         begin
             Obj := Obj.Component;
-            if Obj.Name.Layer <> Slk.Layer then
+
+            // Allow under are user defined reference designators that can be ignored
+            if (Allow_Under(Obj, AllowUnderList)) or (Obj.Name.Layer <> Slk.Layer) then
             begin
                  Obj := Iterator.NextPCBObject;
                  Continue;
@@ -407,6 +438,22 @@ begin
   End;
 end;
 
+function Get_Iterator_Count(Iterator: IPCB_BoardIterator): Integer;
+var
+    cnt : Integer;
+    cmp : IPCB_Component;
+begin
+  cnt := 0;
+
+  cmp := Iterator.FirstPCBObject;
+  While cmp <> NIL Do
+  Begin
+       Inc(cnt);
+       cmp := Iterator.NextPCBObject;
+  End;
+  result := cnt;
+end;
+
 function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
@@ -458,13 +505,9 @@ begin
                          Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
                          AutoPosDeltaAdjust(NextAutoP, xoff*OFFSET_DELTA, yoff*OFFSET_DELTA, Silkscreen, Layer2String(Silkscreen.Component.Layer));
 
-                         // Component Overlap Detection
-                         If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
-                         Begin
-                              Continue;
-                         End
+
                          // Silkscreen RefDes Overlap Detection
-                         Else If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
+                         If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -479,6 +522,11 @@ begin
                          End
                          // Outside Board Edge
                          Else If Is_Outside_Board(Board, Silkscreen) Then
+                         Begin
+                              Continue;
+                         End
+                         // Component Overlap Detection
+                         Else If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -593,8 +641,14 @@ begin
     PCBServer.PostProcess;
 end;
 
+Procedure RunGUI;
+Begin
+    MEM_AllowUnder.Text := TEXTBOXINIT;
+    Form_PlaceSilk.ShowModal;
+End;
+
 {..............................................................................}
-Procedure RunPlaceSilkscreen;
+function Main(Place_Selected: Boolean, Place_OverComp: Boolean, AllowUnderList: TStringList);
 Var
     Board         : IPCB_Board;
     Silkscreen    : IPCB_Text;
@@ -604,24 +658,16 @@ Var
     NotPlaced     : TObjectList;
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
-    OnlySelected, MoveSlkOverCmp : Boolean;
-    btnChoice : Integer;
 Begin
     // Retrieve the current board
     Board := PCBServer.GetCurrentPCBBoard;
     If Board = Nil Then Exit;
 
-    OnlySelected := False;
-    btnChoice := messagedlg('Only place selected components silkscreen? NO: Place entire PCB', mtCustom, mbYesNoCancel, 0);
-    If btnChoice = mrCancel Then Exit;
-    If btnChoice = mrYes Then OnlySelected := True;
-
-
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
 
     // Initialize silk reference designators to board origin coordinates.
-    Move_Silk_Off_Board(Board, OnlySelected);
+    Move_Silk_Off_Board(Board, Place_Selected);
 
     // Create the iterator that will look for Component Body objects only
     Iterator        := Board.BoardIterator_Create;
@@ -631,12 +677,16 @@ Begin
 
     NotPlaced := TObjectList.Create;
 
+    ProgressBar1.Position := 0;
+    ProgressBar1.Update;
+    ProgressBar1.Max := Get_Iterator_Count(Iterator);
+
     // Search for component body objects and get their Name, Kind, Area and OverallHeight values
     Count := 0; PlaceCnt := 0; NotPlaceCnt := 0;
     Cmp := Iterator.FirstPCBObject;
     While (Cmp <> Nil) Do
     Begin
-        if (OnlySelected and Cmp.Selected) or (not OnlySelected) then
+        if (Place_Selected and Cmp.Selected) or (not(Place_Selected)) then
         begin
             Silkscreen := Cmp.Name;
             Rotation_MatchSilk2Comp(Silkscreen); // Matches silk rotation to component rotation
@@ -660,6 +710,8 @@ Begin
             Inc(Count);
         end;
         Cmp := Iterator.NextPCBObject;
+        ProgressBar1.Position := ProgressBar1.Position + 1;
+        ProgressBar1.Update;
     End;
     Board.BoardIterator_Destroy(Iterator);
 
@@ -669,12 +721,60 @@ Begin
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
 
-    // Move each silkscreen reference designator over its respective component?
-    MoveSlkOverCmp := ConfirmNoYes('Would you like to move UNPLACED silkscreen on top of components? No: Will leave unplaced silkscreen off the board.');
-    If MoveSlkOverCmp Then Move_Silk_Over_Comp(NotPlaced);
+    // Move each silkscreen reference designator over its respective component
+    If Place_OverComp Then Move_Silk_Over_Comp(NotPlaced);
 
     ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of ' + IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt/Count)*100)) + '%');
 End;
 {..............................................................................}
 
-{..............................................................................}
+function Split(Delimiter: Char; Text: TPCBString; ListOfStrings: TStrings);
+begin
+   ListOfStrings.Clear;
+   ListOfStrings.Delimiter       := Delimiter;
+   ListOfStrings.StrictDelimiter := True; // Requires D2006 or newer.
+   ListOfStrings.DelimitedText   := Text;
+end;
+
+// Unfortunately [rfReplaceAll] keeps throwing errors, so I had to write this function
+function RemoveNewLines(Text: TPCBString):TPCBString;
+var
+     strlen : Integer;
+     NewStr : TPCBString;
+begin
+     strlen := length(Text);
+     NewStr := StringReplace(Text, NEWLINECODE, ',', rfReplaceAll);
+     While length(NewStr) <> strlen do
+     begin
+         strlen := length(NewStr);
+         NewStr := StringReplace(NewStr, NEWLINECODE, ',', rfReplaceAll);
+         NewStr := StringReplace(NewStr, ' ', '', rfReplaceAll);
+     end;
+     result := NewStr;
+end;
+
+procedure TForm_PlaceSilk.BTN_RunClick(Sender: TObject);
+var
+     Place_Selected : Boolean;
+     Place_OverComp : Boolean;
+     StrNoSpace : TPCBString;
+     i : Integer;
+begin
+     Place_Selected := RG_Filter.ItemIndex = 1;
+     Place_OverComp := RG_Failures.ItemIndex = 0;
+
+     AllowUnderList := TStringList.Create;
+     StrNoSpace := RemoveNewLines(MEM_AllowUnder.Text);
+     Split(',', StrNoSpace, AllowUnderList);
+
+     Main(Place_Selected, Place_OverComp, AllowUnderList);
+     AllowUnderList.Free;
+     Close;
+end;
+
+// When user first enters textbox, clear it
+procedure TForm_PlaceSilk.MEM_AllowUnderEnter(Sender: TObject);
+begin
+    if MEM_AllowUnder.Text = TEXTBOXINIT then MEM_AllowUnder.Text := '';
+end;
+
