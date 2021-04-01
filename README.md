@@ -4,9 +4,9 @@ Iterates through each components' silkscreen reference designator and tries to p
 This script should be a good start for placement, but fine tuning will definitely need to be done after running.
 
 ## How to Run
-1. Run script from pcb layout. If you want to only place selected components' silkscreen, then select these components before running the script.
-2. A prompt will ask if you would like to run only on selected components (YES). NO to run on entire PCB. CANCEL to exit script.
-2. Any unplaced silkscreen will be moved off the board or optionally placed on top of components. At the end a prompt will ask if you would like to place unplaced silkscreen off the board or over components.
+1. Run script from pcb layout. If you want to only place selected components' silkscreen, then select these components (not designators) before running the script.
+2. A GUI will open. Select options and run.
+2. Any unplaced silkscreen will be placed on top of components by default or may be placed off the board if selected.
 3. A popup message box will appear on completion saying how many components were placed and what percentage were placed.
 
 Note: May take a long time to run depending on board size, board density, & speed of computer. It took my PC 15 seconds to place 230 components and about 15 minutes to place 3000 components on a much more dense board. My PC is relatively fast, so your mileage may vary. I would recommend trying to run on selected components first and select a smaller subset to see functionality.
