@@ -11,8 +11,16 @@ object Form_PlaceSilk: TForm_PlaceSilk
   Font.Name = 'Tahoma'
   Font.Style = []
   OldCreateOrder = False
+  OnActivate = Form_PlaceSilkActivate
   PixelsPerInch = 96
   TextHeight = 13
+  object lblCmpOutLayer: TLabel
+    Left = 16
+    Top = 188
+    Width = 126
+    Height = 13
+    Caption = 'Component Outline Layer:'
+  end
   object RG_Filter: TRadioGroup
     Left = 16
     Top = 16
@@ -70,5 +78,14 @@ object Form_PlaceSilk: TForm_PlaceSilk
     Width = 340
     Height = 22
     TabOrder = 4
+  end
+  object cbCmpOutlineLayer: TComboBox
+    Left = 15
+    Top = 206
+    Width = 193
+    Height = 21
+    TabOrder = 5
+    Text = 'cbCmpOutlineLayer'
+    OnChange = cbCmpOutlineLayerChange
   end
 end
