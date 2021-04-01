@@ -23,6 +23,7 @@ Var
     MechLayerIDList: TStringList;
     Board         : IPCB_Board;
     CmpOutlineLayerID : Integer;
+    AvoidVias : Boolean;
 
 // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
@@ -196,7 +197,7 @@ begin
      if (Layer2String(SlkLayer) = 'Bottom Overlay') then TopBot := eBottomLayer;
 
      result := MkSet(SlkLayer); // Default layer set
-     if (ObjID = eComponentObject) or (ObjID = ePadObject) then
+     if (ObjID = eComponentObject) or (ObjID = ePadObject) or (ObjID = eViaObject) then
      begin
          result := MkSet(TopBot, eMultiLayer);
      end
@@ -533,6 +534,10 @@ begin
                          Begin
                               Continue;
                          End
+                         Else If (AvoidVias) And (IsOverObj(Silkscreen, eViaObject, FilterSize)) Then
+                         Begin
+                              Continue;
+                         End
                          // PLACED
                          Else
                          Begin
@@ -762,6 +767,8 @@ begin
 
      Place_Selected := RG_Filter.ItemIndex = 1;
      Place_OverComp := RG_Failures.ItemIndex = 0;
+
+     AvoidVias := chkAvoidVias.Checked;
 
      AllowUnderList := TStringList.Create;
      StrNoSpace := RemoveNewLines(MEM_AllowUnder.Text);

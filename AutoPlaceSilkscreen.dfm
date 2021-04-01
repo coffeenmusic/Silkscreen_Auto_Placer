@@ -88,4 +88,12 @@ object Form_PlaceSilk: TForm_PlaceSilk
     Text = 'cbCmpOutlineLayer'
     OnChange = cbCmpOutlineLayerChange
   end
+  object chkAvoidVias: TCheckBox
+    Left = 15
+    Top = 242
+    Width = 97
+    Height = 17
+    Caption = 'Avoid VIAs'
+    TabOrder = 6
+  end
 end
