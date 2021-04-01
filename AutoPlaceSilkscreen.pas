@@ -20,6 +20,9 @@ Const
     TEXTBOXINIT = 'Example:'+NEWLINECODE+'J3'+NEWLINECODE+'SH1';
 Var
     AllowUnderList: TStringList;
+    MechLayerIDList: TStringList;
+    Board         : IPCB_Board;
+    CmpOutlineLayerID : Integer;
 
 // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
@@ -46,7 +49,7 @@ begin
 end;
 
 // Check if object coordinates are outside board edge
-function Is_Outside_Board(Board: IPCB_Board, Obj: IPCB_ObjectClass): Boolean;
+function Is_Outside_Board(Obj: IPCB_ObjectClass): Boolean;
 var
     BoardRect, Rect    : TCoordRect;
 begin
@@ -118,7 +121,7 @@ begin
 end;
 
 // Checks if 2 objects are overlapping on the PCB
-function Is_Overlapping(Board: IPCB_Board, Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
+function Is_Overlapping(Obj1: IPCB_ObjectClass, Obj2: IPCB_ObjectClass): Boolean;
 const
     SLKPAD = 40000; // Allowed Overlap = 4 mil
     PADPAD = 10000; // Margin beyond pad = 1 mil
@@ -199,7 +202,7 @@ begin
      end
      else if (ObjID = eComponentBodyObject) then
      begin
-         result := MkSet(eMechanical1, eMechanical2, eMechanical3, eMechanical13);
+         result := MkSet(CmpOutlineLayerID);
      end;
 end;
 
@@ -224,7 +227,7 @@ begin
 end;
 
 // Get components for surrounding area
-function IsOverObj(Board: IPCB_Board, Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
+function IsOverObj(Slk: IPCB_Text, ObjID: Integer, Filter_Size: Integer): Boolean;
 var
     Iterator      : IPCB_SpatialIterator;
     Obj          : IPCB_ObjectClass;
@@ -283,7 +286,7 @@ begin
 
         Try
         // Check if Silkscreen is overlapping with other object (component/pad/silk)
-        If Is_Overlapping(Board, Slk, Obj) Then
+        If Is_Overlapping(Slk, Obj) Then
         Begin
              result := True;
              Exit; // Equivalent to return in C
@@ -309,7 +312,7 @@ begin
 end;
 
 // Moves silkscreen reference designators to board origin. Used as initialization step.
-function Move_Silk_Off_Board(Board: IPCB_Board, OnlySelected : Boolean);
+function Move_Silk_Off_Board(OnlySelected : Boolean);
 var
     Iterator     : IPCB_SpatialIterator;
     Slk          : IPCB_Text;
@@ -454,7 +457,7 @@ begin
   result := cnt;
 end;
 
-function Place_Silkscreen(Board: IPCB_Board, Silkscreen: IPCB_Text): Boolean;
+function Place_Silkscreen(Silkscreen: IPCB_Text): Boolean;
 const
     OFFSET_DELTA = 5; // [mils] Silkscreen placement will move the position around by this delta
     OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
@@ -507,26 +510,26 @@ begin
 
 
                          // Silkscreen RefDes Overlap Detection
-                         If IsOverObj(Board, Silkscreen, eTextObject, FilterSize) Then
+                         If IsOverObj(Silkscreen, eTextObject, FilterSize) Then
                          Begin
                               Continue;
                          End
                          // Silkscreen Tracks Overlap Detection
-                         Else If IsOverObj(Board, Silkscreen, eTrackObject, FilterSize) Then
+                         Else If IsOverObj(Silkscreen, eTrackObject, FilterSize) Then
                          Begin
                               Continue;
                          End
-                         Else If IsOverObj(Board, Silkscreen, ePadObject, FilterSize) Then
+                         Else If IsOverObj(Silkscreen, ePadObject, FilterSize) Then
                          Begin
                               Continue;
                          End
                          // Outside Board Edge
-                         Else If Is_Outside_Board(Board, Silkscreen) Then
+                         Else If Is_Outside_Board(Silkscreen) Then
                          Begin
                               Continue;
                          End
                          // Component Overlap Detection
-                         Else If IsOverObj(Board, Silkscreen, eComponentBodyObject, FilterSize) Then
+                         Else If IsOverObj(Silkscreen, eComponentBodyObject, FilterSize) Then
                          Begin
                               Continue;
                          End
@@ -576,7 +579,7 @@ begin
 end;
 
 // Try different rotations on squarish components
-function Try_Rotation(Board: IPCB_Board, SlkList: TObjectList): Integer;
+function Try_Rotation(SlkList: TObjectList): Integer;
 const
      MAX_RATIO = 1.2; // Component is almost square, so we are safe to try a different rotation
 var
@@ -625,7 +628,7 @@ begin
         End;
 
         // If not placed, reset the rotation back to its original value
-        If Place_Silkscreen(Board, Slk) Then
+        If Place_Silkscreen(Slk) Then
         Begin
              Inc(PlaceCnt);
         End
@@ -650,7 +653,6 @@ End;
 {..............................................................................}
 function Main(Place_Selected: Boolean, Place_OverComp: Boolean, AllowUnderList: TStringList);
 Var
-    Board         : IPCB_Board;
     Silkscreen    : IPCB_Text;
     Cmp           : IPCB_Component;
     Iterator      : IPCB_BoardIterator;
@@ -659,15 +661,11 @@ Var
     Rotation      : Integer;
     X1, X2, Y1, Y2: Integer;
 Begin
-    // Retrieve the current board
-    Board := PCBServer.GetCurrentPCBBoard;
-    If Board = Nil Then Exit;
-
     // set cursor to waiting.
     Screen.Cursor      := crHourGlass;
 
     // Initialize silk reference designators to board origin coordinates.
-    Move_Silk_Off_Board(Board, Place_Selected);
+    Move_Silk_Off_Board(Place_Selected);
 
     // Create the iterator that will look for Component Body objects only
     Iterator        := Board.BoardIterator_Create;
@@ -694,7 +692,7 @@ Begin
             PCBServer.PreProcess;
             PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast, PCBM_BeginModify , c_NoEventData);
 
-            if (Place_Silkscreen(Board, Silkscreen)) then
+            if (Place_Silkscreen(Silkscreen)) then
             begin
                 Inc(PlaceCnt);
             end
@@ -716,7 +714,7 @@ Begin
     Board.BoardIterator_Destroy(Iterator);
 
     // Try different rotation for squarish components
-    PlaceCnt := PlaceCnt + Try_Rotation(Board, NotPlaced);
+    PlaceCnt := PlaceCnt + Try_Rotation(NotPlaced);
 
     // Restore cursor to normal
     Screen.Cursor          := crArrow;
@@ -760,6 +758,8 @@ var
      StrNoSpace : TPCBString;
      i : Integer;
 begin
+     MechLayerIDList.Free;
+
      Place_Selected := RG_Filter.ItemIndex = 1;
      Place_OverComp := RG_Failures.ItemIndex = 0;
 
@@ -776,5 +776,55 @@ end;
 procedure TForm_PlaceSilk.MEM_AllowUnderEnter(Sender: TObject);
 begin
     if MEM_AllowUnder.Text = TEXTBOXINIT then MEM_AllowUnder.Text := '';
+end;
+
+
+procedure TForm_PlaceSilk.Form_PlaceSilkActivate(Sender: TObject);
+const
+    DEFAULT_CMP_OUTLINE_LAYER = 'Mechanical 13';
+var
+    MechIterator : IPCB_LayerObjectIterator;
+    LayerObj : IPCB_LayerObject;
+    idx : Integer;
+begin
+    // Retrieve the current board
+    Board := PCBServer.GetCurrentPCBBoard;
+    If Board = Nil Then Exit;
+
+    MechLayerIDList := TStringList.Create;
+
+    idx := 0;
+    CmpOutlineLayerID := 0;
+    MechIterator := Board.MechanicalLayerIterator;
+    While MechIterator.Next Do
+    Begin
+        LayerObj := MechIterator.LayerObject;
+
+        cbCmpOutlineLayer.AddItem(LayerObj.Name, LayerObj);
+        MechLayerIDList.Add(IntToStr(LayerObj.V6_LayerID));
+
+        // Set default layer
+        If LayerObj.Name = DEFAULT_CMP_OUTLINE_LAYER Then
+        Begin
+            cbCmpOutlineLayer.SetItemIndex(idx);
+            CmpOutlineLayerID := LayerObj.V6_LayerID;
+        End;
+
+        Inc(idx)
+    End;
+end;
+
+// New combobox item selected
+procedure TForm_PlaceSilk.cbCmpOutlineLayerChange(Sender: TObject);
+var
+    idx : Integer;
+    LayerIdx : TLayer;
+    LayerObj : IPCB_LayerObject;
+begin
+    idx := cbCmpOutlineLayer.GetItemIndex();
+    LayerObj := cbCmpOutlineLayer.Items[idx];
+
+    LayerIdx := String2Layer(cbCmpOutlineLayer.Text);
+    CmpOutlineLayerID := StrToInt(MechLayerIDList.Get(idx));
 end;
 
