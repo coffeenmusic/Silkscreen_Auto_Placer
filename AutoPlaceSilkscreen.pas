@@ -212,7 +212,7 @@ var
     refdes : TPCB_String;
     i : Integer;
 begin
-    if AllowUnderList <> nil then
+    if (AllowUnderList <> nil) and (AllowUnderList.Count > 0) then
     begin
         For i := 0 to AllowUnderList.Count - 1 do
         begin
@@ -278,7 +278,7 @@ begin
             Obj := Obj.Component;
 
             // Allow under are user defined reference designators that can be ignored
-            if (Allow_Under(Obj, AllowUnderList)) or (Obj.Name.Layer <> Slk.Layer) then
+            if (Obj = nil) or (Allow_Under(Obj, AllowUnderList)) or (Obj.Name.Layer <> Slk.Layer) then
             begin
                  Obj := Iterator.NextPCBObject;
                  Continue;
@@ -771,8 +771,11 @@ begin
      AvoidVias := chkAvoidVias.Checked;
 
      AllowUnderList := TStringList.Create;
-     StrNoSpace := RemoveNewLines(MEM_AllowUnder.Text);
-     Split(',', StrNoSpace, AllowUnderList);
+     if MEM_AllowUnder.Text <> TEXTBOXINIT then
+     begin
+         StrNoSpace := RemoveNewLines(MEM_AllowUnder.Text);
+         Split(',', StrNoSpace, AllowUnderList);
+     end;
 
      Main(Place_Selected, Place_OverComp, AllowUnderList);
      AllowUnderList.Free;
