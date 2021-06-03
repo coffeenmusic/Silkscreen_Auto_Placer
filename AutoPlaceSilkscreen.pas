@@ -814,7 +814,7 @@ begin
         MechLayerIDList.Add(IntToStr(LayerObj.V6_LayerID));
 
         // Set default layer
-        If LayerObj.Name = DEFAULT_CMP_OUTLINE_LAYER Then
+        If (LayerObj.Name = DEFAULT_CMP_OUTLINE_LAYER) or (ContainsText(LayerObj.Name, 'Component Outline')) Then
         Begin
             cbCmpOutlineLayer.SetItemIndex(idx);
             CmpOutlineLayerID := LayerObj.V6_LayerID;
