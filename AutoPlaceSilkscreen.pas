@@ -1168,6 +1168,7 @@ begin
     PCBServer.PreProcess;
     PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast,
       PCBM_BeginModify, c_NoEventData);
+    Rotation_MatchSilk2Comp(Silkscreen);
     Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
     Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
     PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast,
