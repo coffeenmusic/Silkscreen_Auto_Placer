@@ -1383,14 +1383,14 @@ begin
   IniFile.WriteInteger('General', 'FilterOptions', RG_Filter.ItemIndex);
   IniFile.WriteInteger('General', 'FailedPlacementOptions',
     RG_Failures.ItemIndex);
-  IniFile.WriteBool('General', 'AvoidVias', chkAvoidVias.Enabled);
+  IniFile.WriteBool('General', 'AvoidVias', chkAvoidVias.Checked);
   IniFile.WriteInteger('General', 'RotationStrategy',
     RotationStrategyCb.ItemIndex);
   IniFile.WriteBool('General', 'TryAlteredRotation',
-    TryAlteredRotationChk.Enabled);
-  IniFile.WriteBool('General', 'FixedSizeEnabled', FixedSizeChk.Enabled);
+    TryAlteredRotationChk.Checked);
+  IniFile.WriteBool('General', 'FixedSizeEnabled', FixedSizeChk.Checked);
   IniFile.WriteString('General', 'FixedSize', FixedSizeEdt.Text);
-  IniFile.WriteBool('General', 'FixedWidthEnabled', FixedWidthChk.Enabled);
+  IniFile.WriteBool('General', 'FixedWidthEnabled', FixedWidthChk.Checked);
   IniFile.WriteString('General', 'FixedWidth', FixedWidthEdt.Text);
   IniFile.WriteString('General', 'PositionDelta', PositionDeltaEdt.Text);
 
@@ -1424,18 +1424,18 @@ begin
     RG_Filter.ItemIndex);
   RG_Failures.ItemIndex := IniFile.ReadInteger('General',
     'FailedPlacementOptions', RG_Failures.ItemIndex);
-  chkAvoidVias.Enabled := IniFile.ReadBool('General', 'AvoidVias',
-    chkAvoidVias.Enabled);
+  chkAvoidVias.Checked := IniFile.ReadBool('General', 'AvoidVias',
+    chkAvoidVias.Checked);
   RotationStrategyCb.ItemIndex := IniFile.ReadInteger('General',
     'RotationStrategy', RotationStrategyCb.ItemIndex);
-  TryAlteredRotationChk.Enabled := IniFile.ReadBool('General',
-    'TryAlteredRotation', TryAlteredRotationChk.Enabled);
-  FixedSizeChk.Enabled := IniFile.ReadBool('General', 'FixedSizeEnabled',
-    FixedSizeChk.Enabled);
+  TryAlteredRotationChk.Checked := IniFile.ReadBool('General',
+    'TryAlteredRotation', TryAlteredRotationChk.Checked);
+  FixedSizeChk.Checked := IniFile.ReadBool('General', 'FixedSizeEnabled',
+    FixedSizeChk.Checked);
   FixedSizeEdt.Text := IniFile.ReadString('General', 'FixedSize',
     FixedSizeEdt.Text);
-  FixedWidthChk.Enabled := IniFile.ReadBool('General', 'FixedWidthEnabled',
-    FixedWidthChk.Enabled);
+  FixedWidthChk.Checked := IniFile.ReadBool('General', 'FixedWidthEnabled',
+    FixedWidthChk.Checked);
   FixedWidthEdt.Text := IniFile.ReadString('General', 'FixedWidth',
     FixedWidthEdt.Text);
   PositionDeltaEdt.Text := IniFile.ReadString('General', 'PositionDelta',
