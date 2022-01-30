@@ -28,6 +28,7 @@ var
   CmpOutlineLayerID: Integer;
   AvoidVias: Boolean;
   DictionaryCache: TStringList;
+  TextProperites: TStringList;
   FormCheckListBox1: TCheckListBox;
   SilkscreenPositionDelta: TCoord;
   SilkscreenFixedWidth: TCoord;
@@ -360,8 +361,15 @@ begin
     begin
       if (OnlySelected and Slk.Component.Selected) or (not OnlySelected) then
       begin
-        Slk.Component.ChangeNameAutoposition := eAutoPos_Manual;
+        TextProperites.Add(Slk.Text + '.Rotation=' + IntToStr(Slk.Rotation));
+        TextProperites.Add(Slk.Text + '.Width=' + IntToStr(Slk.Width));
+        TextProperites.Add(Slk.Text + '.Size=' + IntToStr(Slk.size));
+        TextProperites.Add(Slk.Text + '.XLocation=' + IntToStr(Slk.XLocation));
+        TextProperites.Add(Slk.Text + '.YLocation=' + IntToStr(Slk.YLocation));
+
+        Slk.BeginModify;
         Slk.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin - 1000000);
+        Slk.EndModify;
         // Move slightly off board origin
       end;
     end;
@@ -376,21 +384,52 @@ var
   Slk: IPCB_Text;
   i: Integer;
 begin
-  PCBServer.PreProcess;
   For i := 0 to SlkList.Count - 1 do
   begin
     Slk := SlkList[i];
 
-    PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast,
-      PCBM_BeginModify, c_NoEventData);
-
+    Slk.BeginModify;
     Slk.Component.ChangeNameAutoposition := eAutoPos_CenterCenter;
-
-    PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast,
-      PCBM_EndModify, c_NoEventData);
+    Slk.EndModify;
   end;
+end;
 
-  PCBServer.PostProcess;
+procedure Restore_Comp(SlkList: TObjectList);
+var
+  Slk: IPCB_Text;
+  i: Integer;
+  _Index: Integer;
+  X, Y: Integer;
+begin
+  For i := 0 to SlkList.Count - 1 do
+  begin
+    Slk := SlkList[i];
+
+    Slk.BeginModify;
+
+    _Index := TextProperites.IndexOfName(Slk.Text + '.Rotation');
+    Slk.Rotation := TextProperites.ValueFromIndex[_Index];
+
+    _Index := TextProperites.IndexOfName(Slk.Text + '.Width');
+    Slk.Width := TextProperites.ValueFromIndex[_Index];
+
+    _Index := TextProperites.IndexOfName(Slk.Text + '.Size');
+    Slk.size := TextProperites.ValueFromIndex[_Index];
+
+    Slk.EndModify;
+
+    Slk.BeginModify;
+
+    _Index := TextProperites.IndexOfName(Slk.Text + '.XLocation');
+    X := TextProperites.ValueFromIndex[_Index];
+
+    _Index := TextProperites.IndexOfName(Slk.Text + '.YLocation');
+    Y := TextProperites.ValueFromIndex[_Index];
+
+    Slk.MoveToXY(X, Y);
+
+    Slk.EndModify;
+  end;
 end;
 
 function GetNextAutoPosition(iteration: Integer): Integer;
@@ -493,6 +532,13 @@ begin
   Silk.MoveByXY(dx + MilsToCoord(X_offset), dy + MilsToCoord(Y_offset));
 end;
 
+function MirrorBottomRotation(Text: IPCB_Text; Rotation: TAngle): TAngle;
+begin
+  result := Rotation;
+  if Text.Layer = eBottomOverlay then
+    result := 360 - Rotation;
+end;
+
 procedure Rotation_MatchSilk2Comp(Silk: IPCB_Text);
 var
   R: Integer; // Component Rotation
@@ -501,19 +547,11 @@ begin
 
   if (R = 0) or (R = 180) or (R = 360) then
   begin
-    Silk.Rotation := 0;
+    Silk.Rotation := MirrorBottomRotation(Silk, 0);
   end
   else if (R = 90) or (R = 270) then
   begin
-    if Silk.Layer = eTopOverlay then
-    begin
-      Silk.Rotation := 90;
-    end
-    else
-    begin
-      Silk.Rotation := 270;
-      // Bottom silk should be mirrored and therefore 270 instead of 90
-    end;
+    Silk.Rotation := MirrorBottomRotation(Silk, 90);
   end;
 end;
 
@@ -895,34 +933,34 @@ begin
       begin
         if (Silk.Component.Rotation = 0) or (Silk.Component.Rotation = 180) or
           (Silk.Component.Rotation = 360) then
-          Silk.Rotation := 0
+          Silk.Rotation := MirrorBottomRotation(Silk, 0)
         else if (Silk.Component.Rotation = 90) or (Silk.Component.Rotation = 270)
         then
-          Silk.Rotation := 90;
+          Silk.Rotation := MirrorBottomRotation(Silk, 90);
       end;
     1:
       begin
-        Silk.Rotation := 0;
+        Silk.Rotation := MirrorBottomRotation(Silk, 0);
       end;
     2:
       begin
         Case NameAutoPosition of
           eAutoPos_CenterRight:
-            Silk.Rotation := 90;
+            Silk.Rotation := MirrorBottomRotation(Silk, 90);
           eAutoPos_TopCenter:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
           eAutoPos_CenterLeft:
-            Silk.Rotation := 90;
+            Silk.Rotation := MirrorBottomRotation(Silk, 90);
           eAutoPos_BottomCenter:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
           eAutoPos_TopLeft:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
           eAutoPos_TopRight:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
           eAutoPos_BottomLeft:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
           eAutoPos_BottomRight:
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
         end;
       end;
     3:
@@ -931,9 +969,9 @@ begin
           Silk.Component.BoundingRectangle.Left) >
           (Silk.Component.BoundingRectangle.Top -
           Silk.Component.BoundingRectangle.Bottom) then
-          Silk.Rotation := 0
+          Silk.Rotation := MirrorBottomRotation(Silk, 0)
         else
-          Silk.Rotation := 90;
+          Silk.Rotation := MirrorBottomRotation(Silk, 90);
       end;
     4:
       begin
@@ -941,19 +979,19 @@ begin
         begin
           if (Silk.Component.Rotation = 0) or (Silk.Component.Rotation = 180) or
             (Silk.Component.Rotation = 360) then
-            Silk.Rotation := 0
+            Silk.Rotation := MirrorBottomRotation(Silk, 0)
           else if (Silk.Component.Rotation = 90) or
             (Silk.Component.Rotation = 270) then
-            Silk.Rotation := 90;
+            Silk.Rotation := MirrorBottomRotation(Silk, 90);
         end
         else
         begin
           if (Silk.Component.Rotation = 0) or (Silk.Component.Rotation = 180) or
             (Silk.Component.Rotation = 360) then
-            Silk.Rotation := 90
+            Silk.Rotation := MirrorBottomRotation(Silk, 90)
           else if (Silk.Component.Rotation = 90) or
             (Silk.Component.Rotation = 270) then
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
         end;
       end;
     5:
@@ -962,19 +1000,19 @@ begin
         begin
           if (Silk.Component.Rotation = 0) or (Silk.Component.Rotation = 180) or
             (Silk.Component.Rotation = 360) then
-            Silk.Rotation := 0
+            Silk.Rotation := MirrorBottomRotation(Silk, 0)
           else if (Silk.Component.Rotation = 90) or
             (Silk.Component.Rotation = 270) then
-            Silk.Rotation := 90;
+            Silk.Rotation := MirrorBottomRotation(Silk, 90);
         end
         else
         begin
           if (Silk.Component.Rotation = 0) or (Silk.Component.Rotation = 180) or
             (Silk.Component.Rotation = 360) then
-            Silk.Rotation := 90
+            Silk.Rotation := MirrorBottomRotation(Silk, 90)
           else if (Silk.Component.Rotation = 90) or
             (Silk.Component.Rotation = 270) then
-            Silk.Rotation := 0;
+            Silk.Rotation := MirrorBottomRotation(Silk, 0);
         end;
       end;
   end;
@@ -1042,6 +1080,7 @@ begin
 
   For AlteredRotation := 0 to TryAlteredRotation do
   begin
+    Silkscreen.BeginModify;
 
     // Get Silkscreen Size
     SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
@@ -1053,6 +1092,8 @@ begin
       Silkscreen.Width := SilkscreenFixedWidth
     else
       Silkscreen.Width := 2 * (Silkscreen.size / 10);
+
+    Silkscreen.EndModify;
 
     // If not placed, reduce silkscreen size
     while (CoordToMils(Silkscreen.size) >= ABS_MIN_SILK_SIZE) or
@@ -1073,13 +1114,24 @@ begin
               Continue;
 
             NextAutoP := StrToAutoPos(FormCheckListBox1.Items[i]);
+
+            Silkscreen.BeginModify;
+
             Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
             if AlteredRotation = 1 then
               Silkscreen.Rotation := 90 - Silkscreen.Rotation;
+
+            Silkscreen.EndModify;
+
+            Silkscreen.BeginModify;
+
             Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+
             AutoPosDeltaAdjust(NextAutoP, xoff * OFFSET_DELTA,
               yoff * OFFSET_DELTA, Silkscreen,
               Layer2String(Silkscreen.Component.Layer));
+
+            Silkscreen.EndModify;
 
             // Silkscreen RefDes Overlap Detection
             if IsOverObj(Silkscreen, eTextObject, FilterSize) then
@@ -1139,6 +1191,8 @@ begin
         Break;
       end;
 
+      Silkscreen.BeginModify;
+
       // No placement found, try reducing silkscreen size
       Silkscreen.size := Silkscreen.size - MilsToCoord(SILK_SIZE_DELTA);
       if SilkscreenIsFixedWidth then
@@ -1146,12 +1200,16 @@ begin
       else
         Silkscreen.Width := Int(2 * (Silkscreen.size / 10) - 10000);
       // Width needs to change relative to size
+
+      Silkscreen.EndModify;
     end;
   end;
 
   if not Placed then
   begin
     result := False;
+
+    Silkscreen.BeginModify;
 
     // Reset Silkscreen Size
     SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
@@ -1165,15 +1223,17 @@ begin
       Silkscreen.Width := 2 * (Silkscreen.size / 10);
 
     // Move off board for now
-    PCBServer.PreProcess;
-    PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast,
-      PCBM_BeginModify, c_NoEventData);
     Rotation_MatchSilk2Comp(Silkscreen);
+
+    Silkscreen.EndModify;
+
+    Silkscreen.BeginModify;
+
     Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
+
     Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
-    PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast,
-      PCBM_EndModify, c_NoEventData);
-    PCBServer.PostProcess;
+
+    Silkscreen.EndModify;
   end;
 end;
 
@@ -1189,7 +1249,6 @@ var
   PlaceCnt: Integer;
   Rotation: Integer;
 begin
-  PCBServer.PreProcess;
 
   PlaceCnt := 0;
   For i := 0 to SlkList.Count - 1 do
@@ -1210,23 +1269,23 @@ begin
     if ((w / L) > MAX_RATIO) or ((w / L) < (1 / MAX_RATIO)) then
       Continue;
 
-    PCBServer.PreProcess;
-    PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast,
-      PCBM_BeginModify, c_NoEventData);
+    Slk.BeginModify;
 
     Rotation := Slk.Rotation;
     if (Rotation = 0) or (Rotation = 180) or (Rotation = 360) then
     begin
-      Slk.Rotation := 90;
+      Slk.Rotation := MirrorBottomRotation(Slk, 90);
     end
     else if (Rotation = 90) or (Rotation = 270) then
     begin
-      Slk.Rotation := 0;
+      Slk.Rotation := MirrorBottomRotation(Slk, 0);
     end
     else
     begin
       Slk.Rotation := Slk.Component.Rotation;
     end;
+
+    Slk.EndModify;
 
     // If not placed, reset the rotation back to its original value
     if Place_Silkscreen(Slk) then
@@ -1235,15 +1294,11 @@ begin
     end
     else
     begin
+      Slk.BeginModify;
       Slk.Rotation := Rotation; // Reset Original Rotation
+      Slk.EndModify;
     end;
-
-    PCBServer.SendMessageToRobots(Slk.I_ObjectAddress, c_Broadcast,
-      PCBM_EndModify, c_NoEventData);
-    PCBServer.PostProcess;
   end;
-
-  PCBServer.PostProcess;
 end;
 
 procedure RunGUI;
@@ -1252,34 +1307,57 @@ begin
   Form_PlaceSilk.ShowModal;
 end;
 
+procedure AddMessage(MessageClass, MessageText: String);
+begin
+  // https://www.altium.com/ru/documentation/altium-nexus/wsm-api-types-and-constants/#Image%20Index%20Table
+  // [!!!] 66 index for debug info
+  GetWorkspace.DM_MessagesManager.BeginUpdate();
+  GetWorkspace.DM_MessagesManager.AddMessage(MessageClass, MessageText,
+    'Auto Place Silkscreen', GetWorkspace.DM_FocusedDocument.DM_FileName, '',
+    '', 75, MessageClass = 'APS Status');
+  GetWorkspace.DM_MessagesManager.EndUpdate();
+  GetWorkspace.DM_MessagesManager.UpdateWindow();
+end;
+
 { .............................................................................. }
-procedure Main(Place_Selected: Boolean, Place_OverComp: Boolean,
-  AllowUnderList: TStringList);
+procedure Main(Place_Selected: Boolean; Place_OverComp: Boolean;
+  Place_RestoreOriginal: Boolean; AllowUnderList: TStringList);
 var
   Silkscreen: IPCB_Text;
   Cmp: IPCB_Component;
   Iterator: IPCB_BoardIterator;
   Count, PlaceCnt, NotPlaceCnt, i: Integer;
   NotPlaced: TObjectList;
-  Rotation: Integer;
-  X1, X2, Y1, Y2: Integer;
   PCBSystemOptions: IPCB_SystemOptions;
   DRCSetting: Boolean;
+  StartTime: TDateTime;
 begin
+  StartTime := Now();
+
+  GetWorkspace.DM_MessagesManager.ClearMessages();
+  GetWorkspace.DM_ShowMessageView();
+
+  AddMessage('APS Event', 'Placing Started');
+
+  // Set cursor to waiting.
+  Screen.Cursor := crHourGlass;
+
+  PCBServer.PreProcess;
+
   // Disables Online DRC during designator movement to improve speed
   PCBSystemOptions := PCBServer.SystemOptions;
 
-  if PCBSystemOptions = nil then
-    Exit;
+  if PCBSystemOptions <> nil then
+  begin
+    DRCSetting := PCBSystemOptions.DoOnlineDRC;
+    PCBSystemOptions.DoOnlineDRC := False;
+  end;
 
-  DRCSetting := PCBSystemOptions.DoOnlineDRC;
-  PCBSystemOptions.DoOnlineDRC := False;
+  TextProperites := TStringList.Create;
+  TextProperites.NameValueSeparator := '=';
 
   DictionaryCache := TStringList.Create;
   DictionaryCache.NameValueSeparator := '=';
-
-  // set cursor to waiting.
-  Screen.Cursor := crHourGlass;
 
   // Initialize silk reference designators to board origin coordinates.
   Move_Silk_Off_Board(Place_Selected);
@@ -1317,30 +1395,46 @@ begin
         NotPlaced.Add(Silkscreen);
       end;
 
-      PCBServer.SendMessageToRobots(Silkscreen.I_ObjectAddress, c_Broadcast,
-        PCBM_EndModify, c_NoEventData);
-      PCBServer.PostProcess;
-
       Inc(Count);
     end;
     Cmp := Iterator.NextPCBObject;
+
     ProgressBar1.Position := ProgressBar1.Position + 1;
     ProgressBar1.Update;
+
+    AddMessage('APS Status',
+      Format('%d of %d silkscreens placed (%f%%) in %d Second(s)',
+      [PlaceCnt, Count, PlaceCnt / Count * 100,
+      Trunc((Now() - StartTime) * 86400)]));
   end;
   Board.BoardIterator_Destroy(Iterator);
 
   // Try different rotation for squarish components
   PlaceCnt := PlaceCnt + Try_Rotation(NotPlaced);
 
-  // Restore cursor to normal
-  Screen.Cursor := crArrow;
-
   // Move each silkscreen reference designator over its respective component
   if Place_OverComp then
     Move_Silk_Over_Comp(NotPlaced);
+  if Place_RestoreOriginal then
+    Restore_Comp(NotPlaced);
+
+  DictionaryCache.Free;
+  TextProperites.Free;
 
   // Restore DRC setting
-  PCBSystemOptions.DoOnlineDRC := DRCSetting;
+  if PCBSystemOptions <> nil then
+  begin
+    PCBSystemOptions.DoOnlineDRC := DRCSetting;
+  end;
+
+  PCBServer.PostProcess;
+
+  // Restore cursor to normal
+  Screen.Cursor := crArrow;
+
+  AddMessage('APS Event',
+    Format('Placing finished with 0 contention(s). Failed to placed %d silkscreen(s) in %d Second(s)',
+    [Count - PlaceCnt, Trunc((Now() - StartTime) * 86400)]));
 
   ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of ' +
     IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt / Count) *
@@ -1473,6 +1567,7 @@ procedure TForm_PlaceSilk.BTN_RunClick(Sender: TObject);
 var
   Place_Selected: Boolean;
   Place_OverComp: Boolean;
+  Place_RestoreOriginal: Boolean;
   StrNoSpace: TPCBString;
   i: Integer;
   DisplayUnit: TUnit;
@@ -1484,6 +1579,7 @@ begin
 
   Place_Selected := RG_Filter.ItemIndex = 1;
   Place_OverComp := RG_Failures.ItemIndex = 0;
+  Place_RestoreOriginal := RG_Failures.ItemIndex = 2;
 
   AvoidVias := chkAvoidVias.Checked;
 
@@ -1512,7 +1608,7 @@ begin
   else
     TryAlteredRotation := 0;
 
-  Main(Place_Selected, Place_OverComp, AllowUnderList);
+  Main(Place_Selected, Place_OverComp, Place_RestoreOriginal, AllowUnderList);
 
   AllowUnderList.Free;
 
