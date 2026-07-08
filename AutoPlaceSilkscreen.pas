@@ -64,6 +64,9 @@ var
   // integers that are safe to add negative offsets to.
   BaseL, BaseB, BaseR, BaseT: TStringList;
   BaseX, BaseY, BaseIdx: TStringList;
+  // Component body rectangles occupy the first BodyRectCnt slots of the group A
+  // lists; anything fully covered by one of them is pruned at cache-build time
+  BodyRectCnt: Integer;
   BoardRect: TCoordRect;
   BoardIsRectangular: Boolean;
 
@@ -156,20 +159,41 @@ end;
 // stored value positive so it survives the round trip through TList pointers.
 procedure Cache_Add_Rect(GroupB: Boolean; L: TCoord; B: TCoord; R: TCoord;
   T: TCoord);
+var
+  j: Integer;
+  Lb, Bb, Rb, Tb: TCoord;
 begin
+  Lb := L + COORD_BIAS;
+  Bb := B + COORD_BIAS;
+  Rb := R + COORD_BIAS;
+  Tb := T + COORD_BIAS;
+
   if GroupB then
   begin
-    ObsBL.Add(L + COORD_BIAS);
-    ObsBB.Add(B + COORD_BIAS);
-    ObsBR.Add(R + COORD_BIAS);
-    ObsBT.Add(T + COORD_BIAS);
+    ObsBL.Add(Lb);
+    ObsBB.Add(Bb);
+    ObsBR.Add(Rb);
+    ObsBT.Add(Tb);
   end
   else
   begin
-    ObsAL.Add(L + COORD_BIAS);
-    ObsAB.Add(B + COORD_BIAS);
-    ObsAR.Add(R + COORD_BIAS);
-    ObsAT.Add(T + COORD_BIAS);
+    // Skip rectangles fully covered by a component body rectangle already in
+    // the cache (e.g. a neighbor's pads): any candidate hitting them hits the
+    // body too, so pruning them can never change the outcome, but it shrinks
+    // the list every candidate is tested against. Contained = not sticking
+    // out on any side; only < and > are used, the same operators proven in
+    // Candidate_Is_Clear.
+    For j := 0 to BodyRectCnt - 1 do
+    begin
+      if not((Lb < ObsAL.Items[j]) or (Rb > ObsAR.Items[j]) or
+        (Bb < ObsAB.Items[j]) or (Tb > ObsAT.Items[j])) then
+        Exit;
+    end;
+
+    ObsAL.Add(Lb);
+    ObsAB.Add(Bb);
+    ObsAR.Add(Rb);
+    ObsAT.Add(Tb);
   end;
 end;
 
@@ -192,6 +216,36 @@ begin
   ObsBB.Clear;
   ObsBR.Clear;
   ObsBT.Clear;
+  BodyRectCnt := 0;
+
+  // Component bodies -> parent component footprint rectangles. These go FIRST
+  // so everything they fully cover (a neighbor's pads etc.) can be pruned.
+  if CmpOutlineLayerID <> 0 then
+  begin
+    Iterator := Board.SpatialIterator_Create;
+    Iterator.AddFilter_ObjectSet(MkSet(eComponentBodyObject));
+    Iterator.AddFilter_LayerSet(MkSet(CmpOutlineLayerID));
+    Iterator.AddFilter_Area(RegionL, RegionB, RegionR, RegionT);
+    Obj := Iterator.FirstPCBObject;
+    while Obj <> nil do
+    begin
+      if not Obj.IsHidden then
+      begin
+        Cmp := Obj.Component;
+
+        // Allow under are user defined reference designators that can be ignored
+        if (Cmp <> nil) and (not Allow_Under(Cmp, AllowUnderList)) and
+          (Cmp.Name.Layer = Slk.Layer) then
+        begin
+          Rect := Get_Obj_Rect(Cmp);
+          Cache_Add_Rect(False, Rect.Left, Rect.Bottom, Rect.Right, Rect.Top);
+        end;
+      end;
+      Obj := Iterator.NextPCBObject;
+    end;
+    Board.SpatialIterator_Destroy(Iterator);
+  end;
+  BodyRectCnt := ObsAL.Count;
 
   // Silkscreen text, tracks & arcs on the same overlay layer
   Iterator := Board.SpatialIterator_Create;
@@ -250,33 +304,6 @@ begin
     Obj := Iterator.NextPCBObject;
   end;
   Board.SpatialIterator_Destroy(Iterator);
-
-  // Component bodies -> parent component footprint rectangles
-  if CmpOutlineLayerID <> 0 then
-  begin
-    Iterator := Board.SpatialIterator_Create;
-    Iterator.AddFilter_ObjectSet(MkSet(eComponentBodyObject));
-    Iterator.AddFilter_LayerSet(MkSet(CmpOutlineLayerID));
-    Iterator.AddFilter_Area(RegionL, RegionB, RegionR, RegionT);
-    Obj := Iterator.FirstPCBObject;
-    while Obj <> nil do
-    begin
-      if not Obj.IsHidden then
-      begin
-        Cmp := Obj.Component;
-
-        // Allow under are user defined reference designators that can be ignored
-        if (Cmp <> nil) and (not Allow_Under(Cmp, AllowUnderList)) and
-          (Cmp.Name.Layer = Slk.Layer) then
-        begin
-          Rect := Get_Obj_Rect(Cmp);
-          Cache_Add_Rect(False, Rect.Left, Rect.Bottom, Rect.Right, Rect.Top);
-        end;
-      end;
-      Obj := Iterator.NextPCBObject;
-    end;
-    Board.SpatialIterator_Destroy(Iterator);
-  end;
 end;
 
 // Pure in-memory test of one candidate rectangle against the board edge and
