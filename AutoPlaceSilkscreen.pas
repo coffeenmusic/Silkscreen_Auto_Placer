@@ -5,6 +5,14 @@
 
 // HALT EXECUTION: ctrl + PauseBreak
 
+// Performance notes:
+// - Obstacles (pads, tracks, arcs, vias, component bodies, other silkscreen) are
+//   cached once per component into in-memory rectangle lists. Candidate positions
+//   are then tested with pure integer math instead of spatial iterators, which is
+//   orders of magnitude faster on big boards.
+// - Trial moves are done without BeginModify/EndModify; only the final accepted
+//   position is committed with proper undo/notification bracketing.
+
 // TODO:
 // - Iterate through all good placement positions, use the one with the lowest x/y --> x2/y2 delta square distance
 // - Only allow 2 silk designators close to eachother if they are perpendicular to eachother
@@ -20,6 +28,12 @@ uses
 const
   NEWLINECODE = #13#10;
   TEXTBOXINIT = 'Example:' + NEWLINECODE + 'J3' + NEWLINECODE + 'SH1';
+  SLKPAD = 40000; // Allowed silk-to-silk designator overlap = 4 mil
+  PADPAD = 10000; // Margin beyond pad = 1 mil
+  // TList stores untyped pointers: on 64-bit Altium they read back as unsigned,
+  // so negative values overflow. All coordinates stored in the obstacle TLists
+  // are offset by this bias to guarantee they stay positive.
+  COORD_BIAS = 100000000;
 
 var
   AllowUnderList: TStringList;
@@ -37,6 +51,19 @@ var
   SilkscreenIsFixedSize: Boolean;
   TryAlteredRotation: Integer;
   RotationStrategy: Integer;
+
+  // Obstacle cache. Rebuilt once per component; rectangles are stored with any
+  // padding margins and COORD_BIAS already baked in so candidate tests are
+  // simple positive-vs-positive compares (never signed arithmetic on TList items).
+  ObsAL, ObsAB, ObsAR, ObsAT: TList; // Pads/tracks/arcs/vias/component bodies
+  ObsBL, ObsBB, ObsBR, ObsBT: TList; // Silkscreen text on the same overlay
+  // Base candidate rectangle/anchor per enabled autoposition (current
+  // size/rotation). Stored as strings so StrToInt returns clean signed
+  // integers that are safe to add negative offsets to.
+  BaseL, BaseB, BaseR, BaseT: TStringList;
+  BaseX, BaseY, BaseIdx: TStringList;
+  BoardRect: TCoordRect;
+  BoardIsRectangular: Boolean;
 
   // May want different Bounding Rectangles depending on the object
 function Get_Obj_Rect(Obj: IPCB_ObjectClass): TCoordRect;
@@ -62,64 +89,6 @@ begin
   result := Rect;
 end;
 
-// Check if object coordinates are outside board edge
-function Is_Outside_Board(Obj: IPCB_ObjectClass): Boolean;
-var
-  BoardRect, Rect: TCoordRect;
-begin
-  Rect := Get_Obj_Rect(Obj);
-  BoardRect := Get_Obj_Rect(Board);
-
-  if (Rect.Left < BoardRect.Left) or (Rect.Right > BoardRect.Right) or
-    (Rect.Bottom < BoardRect.Bottom) or (Rect.Top > BoardRect.Top) then
-  begin
-    result := True;
-    Exit; // return
-  end;
-
-  result := False;
-end;
-
-// Check if two layers are the on the same side of the board. Handle different layer names.
-function Is_Same_Side(Obj1: IPCB_ObjectClass; Obj2: IPCB_ObjectClass): Boolean;
-var
-  Layer1, Layer2: Integer;
-begin
-  Layer1 := Obj1.Layer;
-  Layer2 := Obj2.Layer;
-  if Obj1.ObjectId = eComponentBodyObject then
-    Layer1 := Obj1.Component.Layer;
-  if Obj2.ObjectId = eComponentBodyObject then
-    Layer2 := Obj2.Component.Layer;
-
-  // Top Layer
-  if (Layer1 = eTopLayer) or (Layer1 = eTopOverlay) then
-  begin
-    if (Layer2 <> eBottomLayer) and (Layer2 <> eBottomOverlay) then
-    begin
-      result := True;
-      Exit; // return True
-    end;
-  end
-  // Bottom Layer
-  else if (Layer1 = eBottomLayer) or (Layer1 = eBottomOverlay) then
-  begin
-    if (Layer2 <> eTopLayer) and (Layer2 <> eTopOverlay) then
-    begin
-      result := True;
-      Exit; // return True
-    end;
-  end
-  // Multi Layer
-  else if (Layer1 = eMultiLayer) or (Layer2 = eMultiLayer) then
-  begin
-    result := True;
-    Exit;
-  end;
-
-  result := False;
-end;
-
 // Guess silkscreen size based on component size
 function Get_Silk_Size(Slk: IPCB_Text; Min_Size: Integer): Integer;
 var
@@ -137,81 +106,6 @@ begin
     size := Min_Size;
 
   result := size;
-end;
-
-// Checks if 2 objects are overlapping on the PCB
-function Is_Overlapping(Obj1: IPCB_ObjectClass; Obj2: IPCB_ObjectClass)
-  : Boolean;
-const
-  SLKPAD = 40000; // Allowed Overlap = 4 mil
-  PADPAD = 10000; // Margin beyond pad = 1 mil
-var
-  Rect1, Rect2: TCoordRect;
-  L, R, T, B: Integer;
-  L2, R2, T2, B2: Integer;
-  Delta1, Delta2: Integer;
-begin
-  // If silkscreen object equals itself, return False
-  if (Obj1.ObjectId = Obj2.ObjectId) and (Obj1.ObjectId = eTextObject) then
-  begin
-    if Obj1.IsDesignator and Obj2.IsDesignator then
-    begin
-      if Obj1.Text = Obj2.Text then
-      begin
-        result := False;
-        Exit; // Continue
-      end;
-    end;
-  end;
-
-  // Continue if Hidden
-  if Obj1.IsHidden or Obj2.IsHidden then
-  begin
-    result := False;
-    Exit; // Continue
-  end;
-
-  // Continue if Layers Dont Match
-  if not Is_Same_Side(Obj1, Obj2) then
-  begin
-    result := False;
-    Exit; // Continue
-  end;
-
-  Rect1 := Get_Obj_Rect(Obj1);
-  Rect2 := Get_Obj_Rect(Obj2);
-
-  // Neg/Pos padding margins
-  Delta1 := 0;
-  Delta2 := 0;
-  if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) and Obj1.IsDesignator
-  then
-    Delta1 := -SLKPAD;
-  if (Obj1.ObjectId = eTextObject) and (Obj2.ObjectId = eTextObject) and Obj2.IsDesignator
-  then
-    Delta2 := -SLKPAD;
-  if (Obj1.ObjectId = ePadObject) then
-    Delta1 := PADPAD;
-  if (Obj2.ObjectId = ePadObject) then
-    Delta2 := PADPAD;
-
-  // Get Bounding Area For Both Objects
-  L := Rect1.Left - Delta1;
-  R := Rect1.Right + Delta1;
-  T := Rect1.Top + Delta1;
-  B := Rect1.Bottom - Delta1;
-
-  L2 := Rect2.Left - Delta2;
-  R2 := Rect2.Right + Delta2;
-  T2 := Rect2.Top + Delta2;
-  B2 := Rect2.Bottom - Delta2;
-
-  if (B > T2) or (T < B2) or (L > R2) or (R < L2) then
-  begin
-    result := False;
-    Exit; // Equivalent to return in C
-  end;
-  result := True;
 end;
 
 // Returns correct layer set given the object being used
@@ -255,97 +149,197 @@ begin
   result := False;
 end;
 
-// Get components for surrounding area
-function IsOverObj(Slk: IPCB_Text; ObjID: Integer;
-  Filter_Size: Integer): Boolean;
+// Add one obstacle rectangle to the cache. GroupB is silkscreen text, which the
+// moving designator is allowed to overlap by SLKPAD. COORD_BIAS keeps every
+// stored value positive so it survives the round trip through TList pointers.
+procedure Cache_Add_Rect(GroupB: Boolean; L: TCoord; B: TCoord; R: TCoord;
+  T: TCoord);
+begin
+  if GroupB then
+  begin
+    ObsBL.Add(L + COORD_BIAS);
+    ObsBB.Add(B + COORD_BIAS);
+    ObsBR.Add(R + COORD_BIAS);
+    ObsBT.Add(T + COORD_BIAS);
+  end
+  else
+  begin
+    ObsAL.Add(L + COORD_BIAS);
+    ObsAB.Add(B + COORD_BIAS);
+    ObsAR.Add(R + COORD_BIAS);
+    ObsAT.Add(T + COORD_BIAS);
+  end;
+end;
+
+// Collect every obstacle rectangle near the component with a single set of
+// spatial queries. All candidate positions are then tested purely in memory.
+procedure Build_Obstacle_Cache(Slk: IPCB_Text; RegionL: TCoord; RegionB: TCoord;
+  RegionR: TCoord; RegionT: TCoord);
 var
   Iterator: IPCB_SpatialIterator;
   Obj: IPCB_ObjectClass;
+  Cmp: IPCB_Component;
   Rect: TCoordRect;
-  RectL, RectR, RectB, RectT: TCoord;
-  RegIter: Boolean; // Regular Iterator
-  Name: TPCBString;
+  Delta: TCoord;
 begin
-  // Spatial Iterators only work with Primitive Objects and not group objects like eComponentObject and dimensions
-  if (ObjID = eComponentObject) then
-  begin
-    Iterator := Board.BoardIterator_Create;
-    Iterator.AddFilter_ObjectSet(MkSet(ObjID));
-    Iterator.AddFilter_LayerSet(Get_LayerSet(Slk.Layer, ObjID));
-    Iterator.AddFilter_Method(eProcessAll);
-    RegIter := True;
-  end
-  else
-  begin
-    Rect := Get_Obj_Rect(Slk);
-    RectL := Rect.Left - Filter_Size;
-    RectR := Rect.Right + Filter_Size;
-    RectT := Rect.Top + Filter_Size;
-    RectB := Rect.Bottom - Filter_Size;
+  ObsAL.Clear;
+  ObsAB.Clear;
+  ObsAR.Clear;
+  ObsAT.Clear;
+  ObsBL.Clear;
+  ObsBB.Clear;
+  ObsBR.Clear;
+  ObsBT.Clear;
 
-    Iterator := Board.SpatialIterator_Create;
-    Iterator.AddFilter_ObjectSet(MkSet(ObjID));
-    Iterator.AddFilter_LayerSet(Get_LayerSet(Slk.Layer, ObjID));
-    Iterator.AddFilter_Area(RectL, RectB, RectR, RectT);
-    RegIter := False;
-  end;
-
-  // Iterate through components or pads or silkscreen etc. Depends on which object is passed in.
+  // Silkscreen text, tracks & arcs on the same overlay layer
+  Iterator := Board.SpatialIterator_Create;
+  Iterator.AddFilter_ObjectSet(MkSet(eTextObject, eTrackObject, eArcObject));
+  Iterator.AddFilter_LayerSet(MkSet(Slk.Layer));
+  Iterator.AddFilter_Area(RegionL, RegionB, RegionR, RegionT);
   Obj := Iterator.FirstPCBObject;
   while Obj <> nil do
   begin
-    // Ignore Hidden Objects
-    if Obj.IsHidden then
+    if not Obj.IsHidden then
     begin
-      Obj := Iterator.NextPCBObject;
-      Continue;
-    end;
-
-    // Convert ComponentBody objects to Component objects
-    if Obj.ObjectId = eComponentBodyObject then
-    begin
-      Obj := Obj.Component;
-
-      // Allow under are user defined reference designators that can be ignored
-      if (Obj = nil) or (Allow_Under(Obj, AllowUnderList)) or
-        (Obj.Name.Layer <> Slk.Layer) then
+      if Obj.ObjectId = eTextObject then
       begin
-        Obj := Iterator.NextPCBObject;
-        Continue;
+        // Skip the designator currently being placed
+        if not (Obj.IsDesignator and (Obj.Text = Slk.Text)) then
+        begin
+          Rect := Get_Obj_Rect(Obj);
+          // Designators tolerate a small mutual overlap (SLKPAD, baked in here)
+          Delta := 0;
+          if Obj.IsDesignator then
+            Delta := SLKPAD;
+          Cache_Add_Rect(True, Rect.Left + Delta, Rect.Bottom + Delta,
+            Rect.Right - Delta, Rect.Top - Delta);
+        end;
+      end
+      else
+      begin
+        Rect := Obj.BoundingRectangle;
+        Cache_Add_Rect(False, Rect.Left, Rect.Bottom, Rect.Right, Rect.Top);
       end;
     end;
-
-    try
-      // Check if Silkscreen is overlapping with other object (component/pad/silk)
-      if Is_Overlapping(Slk, Obj) then
-      begin
-        result := True;
-        Exit; // Equivalent to return in C
-      end;
-    except
-      Name := Slk.Text;
-    end;
-
     Obj := Iterator.NextPCBObject;
   end;
+  Board.SpatialIterator_Destroy(Iterator);
 
-  // Destroy Iterator
-  if RegIter then
-  begin
-    Board.BoardIterator_Destroy(Iterator);
-  end
+  // Pads (and optionally vias) on the same side of the board or multilayer
+  Iterator := Board.SpatialIterator_Create;
+  if AvoidVias then
+    Iterator.AddFilter_ObjectSet(MkSet(ePadObject, eViaObject))
   else
+    Iterator.AddFilter_ObjectSet(MkSet(ePadObject));
+  Iterator.AddFilter_LayerSet(Get_LayerSet(Slk.Layer, ePadObject));
+  Iterator.AddFilter_Area(RegionL, RegionB, RegionR, RegionT);
+  Obj := Iterator.FirstPCBObject;
+  while Obj <> nil do
   begin
+    if not Obj.IsHidden then
+    begin
+      Delta := 0;
+      if Obj.ObjectId = ePadObject then
+        Delta := PADPAD;
+      Rect := Obj.BoundingRectangle;
+      Cache_Add_Rect(False, Rect.Left - Delta, Rect.Bottom - Delta,
+        Rect.Right + Delta, Rect.Top + Delta);
+    end;
+    Obj := Iterator.NextPCBObject;
+  end;
+  Board.SpatialIterator_Destroy(Iterator);
+
+  // Component bodies -> parent component footprint rectangles
+  if CmpOutlineLayerID <> 0 then
+  begin
+    Iterator := Board.SpatialIterator_Create;
+    Iterator.AddFilter_ObjectSet(MkSet(eComponentBodyObject));
+    Iterator.AddFilter_LayerSet(MkSet(CmpOutlineLayerID));
+    Iterator.AddFilter_Area(RegionL, RegionB, RegionR, RegionT);
+    Obj := Iterator.FirstPCBObject;
+    while Obj <> nil do
+    begin
+      if not Obj.IsHidden then
+      begin
+        Cmp := Obj.Component;
+
+        // Allow under are user defined reference designators that can be ignored
+        if (Cmp <> nil) and (not Allow_Under(Cmp, AllowUnderList)) and
+          (Cmp.Name.Layer = Slk.Layer) then
+        begin
+          Rect := Get_Obj_Rect(Cmp);
+          Cache_Add_Rect(False, Rect.Left, Rect.Bottom, Rect.Right, Rect.Top);
+        end;
+      end;
+      Obj := Iterator.NextPCBObject;
+    end;
     Board.SpatialIterator_Destroy(Iterator);
   end;
+end;
 
+// Pure in-memory test of one candidate rectangle against the board edge and
+// the cached obstacles. No API calls except PointInPolygon on odd-shaped boards.
+function Candidate_Is_Clear(L: TCoord; B: TCoord; R: TCoord;
+  T: TCoord): Boolean;
+var
+  i: Integer;
+  Lb, Bb, Rb, Tb: TCoord;
+  Ls, Bs, Rs, Ts: TCoord;
+begin
   result := False;
+
+  // Board edge (bounding rectangle), tested on real coordinates
+  if (L < BoardRect.Left) or (R > BoardRect.Right) or (B < BoardRect.Bottom) or
+    (T > BoardRect.Top) then
+    Exit;
+
+  // Obstacle rectangles are stored biased positive (see Cache_Add_Rect), so
+  // shift the candidate into the same domain before comparing
+  Lb := L + COORD_BIAS;
+  Bb := B + COORD_BIAS;
+  Rb := R + COORD_BIAS;
+  Tb := T + COORD_BIAS;
+
+  // Pads, vias, tracks, arcs & component bodies
+  For i := 0 to ObsAL.Count - 1 do
+  begin
+    if not((Bb > ObsAT.Items[i]) or (Tb < ObsAB.Items[i]) or
+      (Lb > ObsAR.Items[i]) or (Rb < ObsAL.Items[i])) then
+      Exit;
+  end;
+
+  // Other silkscreen text; the moving designator shrinks by SLKPAD too
+  Ls := Lb + SLKPAD;
+  Bs := Bb + SLKPAD;
+  Rs := Rb - SLKPAD;
+  Ts := Tb - SLKPAD;
+  For i := 0 to ObsBL.Count - 1 do
+  begin
+    if not((Bs > ObsBT.Items[i]) or (Ts < ObsBB.Items[i]) or
+      (Ls > ObsBR.Items[i]) or (Rs < ObsBL.Items[i])) then
+      Exit;
+  end;
+
+  // Non-rectangular board outlines: all four corners must be inside the outline
+  if not BoardIsRectangular then
+  begin
+    if not Board.BoardOutline.PointInPolygon(L, B) then
+      Exit;
+    if not Board.BoardOutline.PointInPolygon(L, T) then
+      Exit;
+    if not Board.BoardOutline.PointInPolygon(R, B) then
+      Exit;
+    if not Board.BoardOutline.PointInPolygon(R, T) then
+      Exit;
+  end;
+
+  result := True;
 end;
 
 // Moves silkscreen reference designators to board origin. Used as initialization step.
 procedure Move_Silk_Off_Board(OnlySelected: Boolean);
 var
-  Iterator: IPCB_SpatialIterator;
+  Iterator: IPCB_BoardIterator;
   Slk: IPCB_Text;
 begin
   Iterator := Board.BoardIterator_Create;
@@ -405,9 +399,12 @@ begin
   begin
     Slk := SlkList[i];
 
+    _Index := TextProperites.IndexOfName(Slk.Text + '.Rotation');
+    if _Index < 0 then
+      Continue; // No stored properties for this designator
+
     Slk.BeginModify;
 
-    _Index := TextProperites.IndexOfName(Slk.Text + '.Rotation');
     Slk.Rotation := TextProperites.ValueFromIndex[_Index];
 
     _Index := TextProperites.IndexOfName(Slk.Text + '.Width');
@@ -429,32 +426,6 @@ begin
     Slk.MoveToXY(X, Y);
 
     Slk.EndModify;
-  end;
-end;
-
-function GetNextAutoPosition(iteration: Integer): Integer;
-begin
-  Case iteration of
-    0:
-      result := eAutoPos_CenterRight;
-    1:
-      result := eAutoPos_TopCenter;
-    2:
-      result := eAutoPos_CenterLeft;
-    3:
-      result := eAutoPos_BottomCenter;
-    4:
-      result := eAutoPos_TopLeft;
-    5:
-      result := eAutoPos_TopRight;
-    6:
-      result := eAutoPos_BottomLeft;
-    7:
-      result := eAutoPos_BottomRight;
-    8:
-      result := eAutoPos_Manual;
-  else
-    result := eAutoPos_Manual;
   end;
 end;
 
@@ -867,17 +838,6 @@ begin
     result := 0;
   end;
 
-  {
-    if (Q1 = 0) and (Q2 = 0) and (Q3 > 0) and (Q4 = 0) Then
-    begin
-    Result := 1;
-    end;
-    if (Q1 = 0) and (Q2 = 0) and (Q3 = 0) and (Q4 > 0) Then
-    begin
-    Result := 1;
-    end;
-  }
-
   if (Q1 < Q4) and (Q2 < Q3) and (Q1 > 0) and (Q2 > 0) then
   begin
     result := 1;
@@ -902,24 +862,6 @@ begin
     else
       result := 0;
   end;
-  {
-    if MaxY > MaxX then
-    begin
-    // This is Horizontal component
-    Result := 1;
-    end
-    else if MaxY < MaxX then
-    begin
-    // This is Vertical component
-    Result := 0;
-    end
-    else
-    begin
-    If (PadMaxX-PadMinX)>(PadMaxY-PadMinY) Then
-    Result := 1
-    Else
-    Result := 0;
-    end; }
   DictionaryCache.Add(Component.Pattern + '=' + IntToStr(result));
 end;
 
@@ -1018,49 +960,33 @@ begin
   end;
 end;
 
-function Get_Iterator_Count(Iterator: IPCB_BoardIterator): Integer;
-var
-  cnt: Integer;
-  Cmp: IPCB_Component;
-begin
-  cnt := 0;
-
-  Cmp := Iterator.FirstPCBObject;
-  while Cmp <> nil do
-  begin
-    Inc(cnt);
-    Cmp := Iterator.NextPCBObject;
-  end;
-  result := cnt;
-end;
-
-function Place_Silkscreen(Silkscreen: IPCB_Text): Boolean;
+// Try to place one designator. Obstacles are cached once, candidate positions
+// (autoposition x offset grid x shrinking size x optional altered rotation) are
+// tested in memory, and only the winning position is committed with undo support.
+function Place_Silkscreen(Silkscreen: IPCB_Text; MaxOffset: Integer): Boolean;
 const
   OFFSET_DELTA = 5;
   // [mils] Silkscreen placement will move the position around by this delta
-  OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
   MIN_SILK_SIZE = 30; // [mils]
   ABS_MIN_SILK_SIZE = 25; // [mils]
   SILK_SIZE_DELTA = 5;
   // [mils] Decrement silkscreen size by this value if not placed
-  FILTER_SIZE_MILS = 0;
-  // [mils] Additional delta to check surrounding objects. Adds delta to object rectangle.
 var
   NextAutoP: Integer;
-  Placed: Boolean;
   xinc, yinc, xoff, yoff: Integer;
+  dx, dy: TCoord;
+  CandL, CandB, CandR, CandT: TCoord;
+  ChosenIdx: Integer;
   SlkSize: Integer;
-  FilterSize: Integer;
-  Count, i: Integer;
+  i, b: Integer;
   SilkscreenHor: Integer;
-  DisplayUnit: TUnit;
-  Coord: TCoord;
   AlteredRotation: Integer;
+  Rect: TCoordRect;
+  CmpRect: TCoordRect;
+  MaxDim, RegionExpansion: TCoord;
+  CompLayerName: TPCBString;
 begin
-  result := True;
-  Placed := False;
-
-  DisplayUnit := Board.DisplayUnit;
+  result := False;
 
   // Skip hidden silkscreen
   if Silkscreen.IsHidden then
@@ -1069,8 +995,6 @@ begin
     Exit;
   end;
 
-  FilterSize := MilsToCoord(FILTER_SIZE_MILS);
-
   if RotationStrategy = 4 then
     SilkscreenHor := CalculateHor(Silkscreen.Component)
   else if RotationStrategy = 5 then
@@ -1078,11 +1002,34 @@ begin
   else
     SilkscreenHor := -1;
 
+  CompLayerName := Layer2String(Silkscreen.Component.Layer);
+
+  // Set the initial (largest) silkscreen size before measuring the search region
+  SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+  if SilkscreenIsFixedSize then
+    Silkscreen.size := SilkscreenFixedSize
+  else
+    Silkscreen.size := MilsToCoord(SlkSize);
+  if SilkscreenIsFixedWidth then
+    Silkscreen.Width := SilkscreenFixedWidth
+  else
+    Silkscreen.Width := 2 * (Silkscreen.size / 10);
+
+  // Cache all obstacles that any candidate position could possibly touch
+  Rect := Get_Obj_Rect(Silkscreen);
+  MaxDim := Rect.Right - Rect.Left;
+  if (Rect.Top - Rect.Bottom) > MaxDim then
+    MaxDim := Rect.Top - Rect.Bottom;
+  RegionExpansion := MaxDim + SilkscreenPositionDelta +
+    MilsToCoord((MaxOffset * OFFSET_DELTA) + 20);
+  CmpRect := Get_Obj_Rect(Silkscreen.Component);
+  Build_Obstacle_Cache(Silkscreen, CmpRect.Left - RegionExpansion,
+    CmpRect.Bottom - RegionExpansion, CmpRect.Right + RegionExpansion,
+    CmpRect.Top + RegionExpansion);
+
   For AlteredRotation := 0 to TryAlteredRotation do
   begin
-    Silkscreen.BeginModify;
-
-    // Get Silkscreen Size
+    // Reset silkscreen size for this rotation attempt
     SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
     if SilkscreenIsFixedSize then
       Silkscreen.size := SilkscreenFixedSize
@@ -1093,79 +1040,81 @@ begin
     else
       Silkscreen.Width := 2 * (Silkscreen.size / 10);
 
-    Silkscreen.EndModify;
-
     // If not placed, reduce silkscreen size
     while (CoordToMils(Silkscreen.size) >= ABS_MIN_SILK_SIZE) or
       (SilkscreenIsFixedSize) do
     begin
+      // Compute the base rectangle/anchor once per enabled autoposition. These
+      // trial moves are raw (no BeginModify) since they are discarded anyway.
+      BaseL.Clear;
+      BaseB.Clear;
+      BaseR.Clear;
+      BaseT.Clear;
+      BaseX.Clear;
+      BaseY.Clear;
+      BaseIdx.Clear;
+      For i := 0 to FormCheckListBox1.Items.Count - 1 do
+      begin
+        if not FormCheckListBox1.Checked[i] then
+          Continue;
+
+        NextAutoP := StrToAutoPos(FormCheckListBox1.Items[i]);
+
+        Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
+        if AlteredRotation = 1 then
+          Silkscreen.Rotation := 90 - Silkscreen.Rotation;
+
+        Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+        AutoPosDeltaAdjust(NextAutoP, 0, 0, Silkscreen, CompLayerName);
+
+        Rect := Get_Obj_Rect(Silkscreen);
+        BaseIdx.Add(IntToStr(i));
+        BaseL.Add(IntToStr(Rect.Left));
+        BaseB.Add(IntToStr(Rect.Bottom));
+        BaseR.Add(IntToStr(Rect.Right));
+        BaseT.Add(IntToStr(Rect.Top));
+        BaseX.Add(IntToStr(Silkscreen.XLocation));
+        BaseY.Add(IntToStr(Silkscreen.YLocation));
+      end;
+
+      // Walk the offset grid; offsets are pure translations of the base rects,
+      // so each candidate is tested without touching the board.
       xoff := 0;
-      // If not placed, increment x offset
-      For xinc := 0 to OFFSET_CNT do
+      For xinc := 0 to MaxOffset do
       begin
         yoff := 0;
-        // If not placed, increment y offset
-        For yinc := 0 to OFFSET_CNT do
+        For yinc := 0 to MaxOffset do
         begin
-          // If not placed Change Autoposition on Silkscreen
-          For i := 0 to FormCheckListBox1.Items.Count - 1 do
+          dx := MilsToCoord(xoff * OFFSET_DELTA);
+          dy := MilsToCoord(yoff * OFFSET_DELTA);
+
+          For b := 0 to BaseIdx.Count - 1 do
           begin
-            if not FormCheckListBox1.Checked[i] then
-              Continue;
+            // StrToInt returns clean signed integers, safe to add +/- offsets
+            CandL := StrToInt(BaseL.Get(b)) + dx;
+            CandB := StrToInt(BaseB.Get(b)) + dy;
+            CandR := StrToInt(BaseR.Get(b)) + dx;
+            CandT := StrToInt(BaseT.Get(b)) + dy;
 
-            NextAutoP := StrToAutoPos(FormCheckListBox1.Items[i]);
-
-            Silkscreen.BeginModify;
-
-            Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
-            if AlteredRotation = 1 then
-              Silkscreen.Rotation := 90 - Silkscreen.Rotation;
-
-            Silkscreen.EndModify;
-
-            Silkscreen.BeginModify;
-
-            Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
-
-            AutoPosDeltaAdjust(NextAutoP, xoff * OFFSET_DELTA,
-              yoff * OFFSET_DELTA, Silkscreen,
-              Layer2String(Silkscreen.Component.Layer));
-
-            Silkscreen.EndModify;
-
-            // Silkscreen RefDes Overlap Detection
-            if IsOverObj(Silkscreen, eTextObject, FilterSize) then
+            if Candidate_Is_Clear(CandL, CandB, CandR, CandT) then
             begin
-              Continue;
-            end
-            // Silkscreen Tracks Overlap Detection
-            else if IsOverObj(Silkscreen, eTrackObject, FilterSize) then
-            begin
-              Continue;
-            end
-            else if IsOverObj(Silkscreen, ePadObject, FilterSize) then
-            begin
-              Continue;
-            end
-            // Outside Board Edge
-            else if Is_Outside_Board(Silkscreen) then
-            begin
-              Continue;
-            end
-            // Component Overlap Detection
-            else if IsOverObj(Silkscreen, eComponentBodyObject, FilterSize) then
-            begin
-              Continue;
-            end
-            else if (AvoidVias) and
-              (IsOverObj(Silkscreen, eViaObject, FilterSize)) then
-            begin
-              Continue;
-            end
-            // PLACED
-            else
-            begin
-              Placed := True;
+              // PLACED: commit the winning position with proper bracketing
+              ChosenIdx := StrToInt(BaseIdx.Get(b));
+              NextAutoP := StrToAutoPos(FormCheckListBox1.Items[ChosenIdx]);
+
+              Silkscreen.BeginModify;
+
+              Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
+              if AlteredRotation = 1 then
+                Silkscreen.Rotation := 90 - Silkscreen.Rotation;
+
+              Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+              Silkscreen.MoveToXY(StrToInt(BaseX.Get(b)) + dx,
+                StrToInt(BaseY.Get(b)) + dy);
+
+              Silkscreen.EndModify;
+
+              result := True;
               Exit;
             end;
           end;
@@ -1180,18 +1129,12 @@ begin
           xoff := xoff + 1; // Toggle increment
       end;
 
-      if Placed or ((CoordToMils(Silkscreen.size) - SILK_SIZE_DELTA) <
-        ABS_MIN_SILK_SIZE) then
-      begin
-        Break;
-      end;
-
       if SilkscreenIsFixedSize then
-      begin
         Break;
-      end;
 
-      Silkscreen.BeginModify;
+      if (CoordToMils(Silkscreen.size) - SILK_SIZE_DELTA) < ABS_MIN_SILK_SIZE
+      then
+        Break;
 
       // No placement found, try reducing silkscreen size
       Silkscreen.size := Silkscreen.size - MilsToCoord(SILK_SIZE_DELTA);
@@ -1200,62 +1143,60 @@ begin
       else
         Silkscreen.Width := Int(2 * (Silkscreen.size / 10) - 10000);
       // Width needs to change relative to size
-
-      Silkscreen.EndModify;
     end;
   end;
 
-  if not Placed then
-  begin
-    result := False;
+  // Not placed: reset size and park the designator off the board
+  Silkscreen.BeginModify;
 
-    Silkscreen.BeginModify;
+  SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+  if SilkscreenIsFixedSize then
+    Silkscreen.size := SilkscreenFixedSize
+  else
+    Silkscreen.size := MilsToCoord(SlkSize);
+  if SilkscreenIsFixedWidth then
+    Silkscreen.Width := SilkscreenFixedWidth
+  else
+    Silkscreen.Width := 2 * (Silkscreen.size / 10);
 
-    // Reset Silkscreen Size
-    SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
-    if SilkscreenIsFixedSize then
-      Silkscreen.size := SilkscreenFixedSize
-    else
-      Silkscreen.size := MilsToCoord(SlkSize);
-    if SilkscreenIsFixedWidth then
-      Silkscreen.Width := SilkscreenFixedWidth
-    else
-      Silkscreen.Width := 2 * (Silkscreen.size / 10);
+  Rotation_MatchSilk2Comp(Silkscreen);
 
-    // Move off board for now
-    Rotation_MatchSilk2Comp(Silkscreen);
+  Silkscreen.EndModify;
 
-    Silkscreen.EndModify;
+  Silkscreen.BeginModify;
 
-    Silkscreen.BeginModify;
+  Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
 
-    Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
+  Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
 
-    Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
-
-    Silkscreen.EndModify;
-  end;
+  Silkscreen.EndModify;
 end;
 
-// Try different rotations on squarish components
-function Try_Rotation(SlkList: TObjectList): Integer;
+// Second chance for failed designators: flip rotation on squarish components,
+// then retry anything left with a wider offset search grid. Designators that get
+// placed here are NOT added to StillFailed, so later steps leave them alone.
+function Retry_Failed(SlkList: TObjectList; StillFailed: TObjectList;
+  FirstPassOffset: Integer): Integer;
 const
   MAX_RATIO = 1.2;
   // Component is almost square, so we are safe to try a different rotation
+  EXTENDED_OFFSET_CNT = 8; // Wider offset grid (+/- 40 mil) for stubborn parts
 var
   Slk: IPCB_Text;
   Rect: TCoordRect;
   i, L, w: Integer;
   PlaceCnt: Integer;
   Rotation: Integer;
+  Placed: Boolean;
 begin
-
   PlaceCnt := 0;
   For i := 0 to SlkList.Count - 1 do
   begin
     Slk := SlkList[i];
+    Placed := False;
 
-    Rect := Get_Obj_Rect(Slk);
+    // Squareness of the component (not the text) decides if rotating is safe
+    Rect := Get_Obj_Rect(Slk.Component);
     L := Rect.Right - Rect.Left;
     w := Rect.Top - Rect.Bottom;
     if w < L then
@@ -1266,39 +1207,32 @@ begin
 
     // Silk rotations that don't match component rotations don't look right, but
     // this is less of a concern with more square components
-    if ((w / L) > MAX_RATIO) or ((w / L) < (1 / MAX_RATIO)) then
-      Continue;
+    if (L > 0) and ((w / L) <= MAX_RATIO) then
+    begin
+      Rotation := Slk.Rotation;
+      if (Rotation = 0) or (Rotation = 180) or (Rotation = 360) then
+        Slk.Rotation := MirrorBottomRotation(Slk, 90)
+      else if (Rotation = 90) or (Rotation = 270) then
+        Slk.Rotation := MirrorBottomRotation(Slk, 0)
+      else
+        Slk.Rotation := Slk.Component.Rotation;
 
-    Slk.BeginModify;
-
-    Rotation := Slk.Rotation;
-    if (Rotation = 0) or (Rotation = 180) or (Rotation = 360) then
-    begin
-      Slk.Rotation := MirrorBottomRotation(Slk, 90);
-    end
-    else if (Rotation = 90) or (Rotation = 270) then
-    begin
-      Slk.Rotation := MirrorBottomRotation(Slk, 0);
-    end
-    else
-    begin
-      Slk.Rotation := Slk.Component.Rotation;
+      if Place_Silkscreen(Slk, FirstPassOffset) then
+        Placed := True
+      else
+        Slk.Rotation := Rotation; // Reset Original Rotation
     end;
 
-    Slk.EndModify;
+    // Still not placed: widen the offset search grid
+    if not Placed then
+      Placed := Place_Silkscreen(Slk, EXTENDED_OFFSET_CNT);
 
-    // If not placed, reset the rotation back to its original value
-    if Place_Silkscreen(Slk) then
-    begin
-      Inc(PlaceCnt);
-    end
+    if Placed then
+      Inc(PlaceCnt)
     else
-    begin
-      Slk.BeginModify;
-      Slk.Rotation := Rotation; // Reset Original Rotation
-      Slk.EndModify;
-    end;
+      StillFailed.Add(Slk);
   end;
+  result := PlaceCnt;
 end;
 
 procedure RunGUI;
@@ -1322,12 +1256,21 @@ end;
 { .............................................................................. }
 procedure Main(Place_Selected: Boolean; Place_OverComp: Boolean;
   Place_RestoreOriginal: Boolean; AllowUnderList: TStringList);
+const
+  OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
+  STATUS_INTERVAL = 10; // Update messages panel/progress every N components
 var
   Silkscreen: IPCB_Text;
   Cmp: IPCB_Component;
   Iterator: IPCB_BoardIterator;
-  Count, PlaceCnt, NotPlaceCnt, i: Integer;
+  Count, PlaceCnt, i: Integer;
   NotPlaced: TObjectList;
+  StillFailed: TObjectList;
+  SortedComps: TStringList;
+  CmpRect: TCoordRect;
+  SizeKey: Integer;
+  Outline: IPCB_BoardOutline;
+  vx, vy: TCoord;
   PCBSystemOptions: IPCB_SystemOptions;
   DRCSetting: Boolean;
   StartTime: TDateTime;
@@ -1359,67 +1302,139 @@ begin
   DictionaryCache := TStringList.Create;
   DictionaryCache.NameValueSeparator := '=';
 
+  // Create the obstacle/candidate caches used by Place_Silkscreen
+  ObsAL := TList.Create;
+  ObsAB := TList.Create;
+  ObsAR := TList.Create;
+  ObsAT := TList.Create;
+  ObsBL := TList.Create;
+  ObsBB := TList.Create;
+  ObsBR := TList.Create;
+  ObsBT := TList.Create;
+  BaseL := TStringList.Create;
+  BaseB := TStringList.Create;
+  BaseR := TStringList.Create;
+  BaseT := TStringList.Create;
+  BaseX := TStringList.Create;
+  BaseY := TStringList.Create;
+  BaseIdx := TStringList.Create;
+
+  // Board outline: candidates are polygon-tested only on non-rectangular boards
+  BoardRect := Get_Obj_Rect(Board);
+  BoardIsRectangular := True;
+  try
+    Outline := Board.BoardOutline;
+    if Outline.PointCount <> 4 then
+      BoardIsRectangular := False
+    else
+      For i := 0 to Outline.PointCount - 1 do
+      begin
+        if Outline.Segments[i].Kind <> ePolySegmentLine then
+          BoardIsRectangular := False
+        else
+        begin
+          vx := Outline.Segments[i].vx;
+          vy := Outline.Segments[i].vy;
+          if ((vx <> BoardRect.Left) and (vx <> BoardRect.Right)) or
+            ((vy <> BoardRect.Bottom) and (vy <> BoardRect.Top)) then
+            BoardIsRectangular := False;
+        end;
+      end;
+  except
+    BoardIsRectangular := False;
+  end;
+
   // Initialize silk reference designators to board origin coordinates.
   Move_Silk_Off_Board(Place_Selected);
 
-  // Create the iterator that will look for Component Body objects only
+  // Collect components sorted smallest-first: parts in dense clusters have the
+  // fewest viable spots, so they get first pick of the free space.
   Iterator := Board.BoardIterator_Create;
   Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
   Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
   Iterator.AddFilter_Method(eProcessAll);
 
-  NotPlaced := TObjectList.Create;
-
-  ProgressBar1.Position := 0;
-  ProgressBar1.Update;
-  ProgressBar1.Max := Get_Iterator_Count(Iterator);
-
-  // Search for component body objects and get their Name, Kind, Area and OverallHeight values
-  Count := 0;
-  PlaceCnt := 0;
-  NotPlaceCnt := 0;
+  SortedComps := TStringList.Create;
   Cmp := Iterator.FirstPCBObject;
   while (Cmp <> nil) do
   begin
     if (Place_Selected and Cmp.Selected) or (not(Place_Selected)) then
     begin
-      Silkscreen := Cmp.Name;
-
-      if (Place_Silkscreen(Silkscreen)) then
-      begin
-        Inc(PlaceCnt);
-      end
-      else
-      begin
-        Inc(NotPlaceCnt);
-        NotPlaced.Add(Silkscreen);
-      end;
-
-      Inc(Count);
+      CmpRect := Get_Obj_Rect(Cmp);
+      SizeKey := Round(CoordToMils(CmpRect.Right - CmpRect.Left) +
+        CoordToMils(CmpRect.Top - CmpRect.Bottom));
+      // Fixed-width numeric key so the alphabetical sort is numeric
+      SortedComps.AddObject(IntToStr(100000000 + SizeKey), Cmp);
     end;
     Cmp := Iterator.NextPCBObject;
-
-    ProgressBar1.Position := ProgressBar1.Position + 1;
-    ProgressBar1.Update;
-
-    AddMessage('APS Status',
-      Format('%d of %d silkscreens placed (%f%%) in %d Second(s)',
-      [PlaceCnt, Count, PlaceCnt / Count * 100,
-      Trunc((Now() - StartTime) * 86400)]));
   end;
   Board.BoardIterator_Destroy(Iterator);
+  SortedComps.Sort;
 
-  // Try different rotation for squarish components
-  PlaceCnt := PlaceCnt + Try_Rotation(NotPlaced);
+  NotPlaced := TObjectList.Create;
+  StillFailed := TObjectList.Create;
 
-  // Move each silkscreen reference designator over its respective component
+  ProgressBar1.Position := 0;
+  ProgressBar1.Max := SortedComps.Count;
+  ProgressBar1.Update;
+
+  Count := 0;
+  PlaceCnt := 0;
+  For i := 0 to SortedComps.Count - 1 do
+  begin
+    Cmp := SortedComps.Objects[i];
+    Silkscreen := Cmp.Name;
+
+    if (Place_Silkscreen(Silkscreen, OFFSET_CNT)) then
+    begin
+      Inc(PlaceCnt);
+    end
+    else
+    begin
+      NotPlaced.Add(Silkscreen);
+    end;
+
+    Inc(Count);
+
+    ProgressBar1.Position := Count;
+    if (Count mod STATUS_INTERVAL = 0) or (Count = SortedComps.Count) then
+    begin
+      ProgressBar1.Update;
+      AddMessage('APS Status',
+        Format('%d of %d silkscreens placed (%f%%) in %d Second(s)',
+        [PlaceCnt, Count, PlaceCnt / Count * 100,
+        Trunc((Now() - StartTime) * 86400)]));
+    end;
+  end;
+
+  // Second pass: rotation flip for squarish components + wider offset search
+  PlaceCnt := PlaceCnt + Retry_Failed(NotPlaced, StillFailed, OFFSET_CNT);
+
+  // Move each still-unplaced silkscreen reference designator over its component
   if Place_OverComp then
-    Move_Silk_Over_Comp(NotPlaced);
+    Move_Silk_Over_Comp(StillFailed);
   if Place_RestoreOriginal then
-    Restore_Comp(NotPlaced);
+    Restore_Comp(StillFailed);
 
   DictionaryCache.Free;
   TextProperites.Free;
+  SortedComps.Free;
+
+  ObsAL.Free;
+  ObsAB.Free;
+  ObsAR.Free;
+  ObsAT.Free;
+  ObsBL.Free;
+  ObsBB.Free;
+  ObsBR.Free;
+  ObsBT.Free;
+  BaseL.Free;
+  BaseB.Free;
+  BaseR.Free;
+  BaseT.Free;
+  BaseX.Free;
+  BaseY.Free;
+  BaseIdx.Free;
 
   // Restore DRC setting
   if PCBSystemOptions <> nil then
@@ -1429,6 +1444,8 @@ begin
 
   PCBServer.PostProcess;
 
+  Board.ViewManager_FullUpdate;
+
   // Restore cursor to normal
   Screen.Cursor := crArrow;
 
@@ -1436,9 +1453,12 @@ begin
     Format('Placing finished with 0 contention(s). Failed to placed %d silkscreen(s) in %d Second(s)',
     [Count - PlaceCnt, Trunc((Now() - StartTime) * 86400)]));
 
-  ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of ' +
-    IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt / Count) *
-    100)) + '%');
+  if Count > 0 then
+    ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of '
+      + IntToStr(Count) + ' Placed. ' + FloatToStr(Round((PlaceCnt / Count) *
+      100)) + '%')
+  else
+    ShowMessage('Script execution complete. No components found to place.');
 end;
 { .............................................................................. }
 
@@ -1607,6 +1627,9 @@ begin
     TryAlteredRotation := 1
   else
     TryAlteredRotation := 0;
+
+  // Pick up strategy changes made in the GUI or loaded from the ini file
+  RotationStrategy := RotationStrategyCb.GetItemIndex();
 
   Main(Place_Selected, Place_OverComp, Place_RestoreOriginal, AllowUnderList);
 
