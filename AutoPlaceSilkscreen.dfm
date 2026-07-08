@@ -4,7 +4,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
   BorderIcons = [biSystemMenu]
   BorderStyle = bsSingle
   Caption = 'Silkscreen Auto Placer'
-  ClientHeight = 416
+  ClientHeight = 450
   ClientWidth = 473
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -47,7 +47,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
   end
   object HintLbl: TLabel
     Left = 136
-    Top = 396
+    Top = 430
     Width = 183
     Height = 13
     Caption = 'HALT EXECUTION: Ctrl + Pause/Break'
@@ -74,7 +74,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
     ItemIndex = 0
     Items.Strings = (
       'Center Over Components'
-      'Place Off Board (Bottom Left)')
+      'Hide Designator')
     TabOrder = 2
   end
   object GB_AllowUnder: TGroupBox
@@ -97,7 +97,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
   end
   object BTN_Run: TButton
     Left = 367
-    Top = 367
+    Top = 401
     Width = 75
     Height = 25
     Caption = 'Run'
@@ -106,7 +106,7 @@ object Form_PlaceSilk: TForm_PlaceSilk
   end
   object ProgressBar1: TProgressBar
     Left = 12
-    Top = 369
+    Top = 403
     Width = 340
     Height = 22
     TabOrder = 4
@@ -217,5 +217,23 @@ object Form_PlaceSilk: TForm_PlaceSilk
     Checked = True
     State = cbChecked
     TabOrder = 14
+  end
+  object WiggleChk: TCheckBox
+    Left = 16
+    Top = 374
+    Width = 200
+    Height = 17
+    Caption = 'Run 2nd Pass'
+    Checked = True
+    State = cbChecked
+    TabOrder = 15
+  end
+  object UnhideAllChk: TCheckBox
+    Left = 226
+    Top = 374
+    Width = 214
+    Height = 17
+    Caption = 'Unhide All Designators'
+    TabOrder = 16
   end
 end

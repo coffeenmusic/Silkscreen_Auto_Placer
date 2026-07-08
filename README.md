@@ -7,7 +7,7 @@ This script should be a good start for placement, but fine tuning will definitel
 ## How to Run
 1. Run script from pcb layout. If you want to only place selected components' silkscreen, then select these components (not designators) before running the script.
 2. A GUI will open. Select options and run.
-2. Any unplaced silkscreen will be placed on top of components by default or may be placed off the board if selected.
+2. Any unplaced silkscreen will be placed on top of components by default or may be hidden (Designator display turned off) if selected.
 3. A popup message box will appear on completion saying how many components were placed and what percentage were placed.
 
 ![GUI Screenshot](GUI_Example.png)
@@ -21,6 +21,7 @@ Note: May take a long time to run depending on board size, board density, & spee
 - Messages panel and progress bar updates are throttled (every 10 components) instead of every component.
 - **Smallest components first**: parts in dense clusters have the fewest viable spots, so they now get first pick of the free space.
 - **Wider retry pass**: designators that fail the first pass are retried with a rotation flip (squarish components) and then with a wider offset grid (up to ±40 mil).
+- **2nd pass (optional, on by default)**: anything still unplaced gets a best-fit "wiggle" search on an expanding ring grid (±100 mil in 10 mil steps) around every enabled position, trying both rotations, and takes the clear spot closest to its ideal position. The progress bar restarts and the status shows 2nd-pass progress.
 - **Non-rectangular boards**: candidate positions are checked against the actual board outline polygon (corner `PointInPolygon` tests), not just its bounding rectangle.
 - Arcs on the overlay layer are now treated as obstacles (silkscreen outlines drawn with arcs were previously ignored).
 - Bug fixes: rotation-retry pass measured the text aspect ratio instead of the component's (making it a near no-op); its placements were later overwritten by the failed-placement handling; the placed count included an uninitialized value; the rotation strategy selected in the GUI/ini was never applied.

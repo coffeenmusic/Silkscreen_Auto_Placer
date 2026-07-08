@@ -51,6 +51,8 @@ var
   SilkscreenIsFixedSize: Boolean;
   TryAlteredRotation: Integer;
   RotationStrategy: Integer;
+  WiggleEnabled: Boolean;
+  UnhideAllDesignators: Boolean;
 
   // Obstacle cache. Rebuilt once per component; rectangles are stored with any
   // padding margins and COORD_BIAS already baked in so candidate tests are
@@ -351,7 +353,8 @@ begin
   Slk := Iterator.FirstPCBObject;
   while Slk <> nil do
   begin
-    if Slk.IsDesignator then
+    // Leave hidden designators alone (e.g. hidden by a previous run)
+    if Slk.IsDesignator and (not Slk.IsHidden) then
     begin
       if (OnlySelected and Slk.Component.Selected) or (not OnlySelected) then
       begin
@@ -371,6 +374,53 @@ begin
     Slk := Iterator.NextPCBObject;
   end;
   Board.BoardIterator_Destroy(Iterator);
+end;
+
+// Turn the Designator display back on for every component so previously
+// hidden designators are included in the placement run
+procedure Unhide_All_Designators(Dummy: Integer);
+var
+  Iterator: IPCB_BoardIterator;
+  Cmp: IPCB_Component;
+begin
+  Iterator := Board.BoardIterator_Create;
+  Iterator.AddFilter_ObjectSet(MkSet(eComponentObject));
+  Iterator.AddFilter_LayerSet(MkSet(eTopLayer, eBottomLayer));
+  Iterator.AddFilter_Method(eProcessAll);
+
+  Cmp := Iterator.FirstPCBObject;
+  while Cmp <> nil do
+  begin
+    if not Cmp.NameOn then
+    begin
+      Cmp.BeginModify;
+      Cmp.NameOn := True;
+      Cmp.EndModify;
+    end;
+    Cmp := Iterator.NextPCBObject;
+  end;
+  Board.BoardIterator_Destroy(Iterator);
+end;
+
+// Hide designators that could not be placed. They are centered on their
+// component first so they sit in a sensible spot if ever unhidden.
+procedure Hide_Designators(SlkList: TObjectList);
+var
+  Slk: IPCB_Text;
+  i: Integer;
+begin
+  For i := 0 to SlkList.Count - 1 do
+  begin
+    Slk := SlkList[i];
+
+    Slk.BeginModify;
+    Slk.Component.ChangeNameAutoposition := eAutoPos_CenterCenter;
+    Slk.EndModify;
+
+    Slk.Component.BeginModify;
+    Slk.Component.NameOn := False;
+    Slk.Component.EndModify;
+  end;
 end;
 
 procedure Move_Silk_Over_Comp(SlkList: TObjectList);
@@ -1235,10 +1285,247 @@ begin
   result := PlaceCnt;
 end;
 
+// 2nd pass "wiggle" search: scan an expanding ring grid around every enabled
+// autoposition (both rotations) and take the clear spot CLOSEST to its ideal
+// position, so the wide search does not wander further than it has to.
+function Wiggle_Place(Silkscreen: IPCB_Text): Boolean;
+const
+  WIGGLE_RADIUS_MILS = 100; // How far the grid extends from each base position
+  WIGGLE_STEP_MILS = 10; // Grid pitch; coarser than the first pass offsets
+  MIN_SILK_SIZE = 30; // [mils]
+  ABS_MIN_SILK_SIZE = 25; // [mils]
+  SILK_SIZE_DELTA = 5; // [mils]
+var
+  NextAutoP: Integer;
+  r, xoff, yoff: Integer;
+  WigSteps, Dist2: Integer;
+  BestScore, BestB, BestXoff, BestYoff: Integer;
+  dx, dy: TCoord;
+  CandL, CandB, CandR, CandT: TCoord;
+  ChosenIdx: Integer;
+  SlkSize: Integer;
+  i, b: Integer;
+  SilkscreenHor: Integer;
+  AlteredRotation: Integer;
+  Rect: TCoordRect;
+  CmpRect: TCoordRect;
+  MaxDim, RegionExpansion: TCoord;
+  CompLayerName: TPCBString;
+begin
+  result := False;
+
+  if Silkscreen.IsHidden then
+  begin
+    result := True;
+    Exit;
+  end;
+
+  if RotationStrategy = 4 then
+    SilkscreenHor := CalculateHor(Silkscreen.Component)
+  else if RotationStrategy = 5 then
+    SilkscreenHor := CalculateHor2(Silkscreen.Component)
+  else
+    SilkscreenHor := -1;
+
+  CompLayerName := Layer2String(Silkscreen.Component.Layer);
+  WigSteps := WIGGLE_RADIUS_MILS div WIGGLE_STEP_MILS;
+
+  // Set the initial (largest) silkscreen size before measuring the search region
+  SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+  if SilkscreenIsFixedSize then
+    Silkscreen.size := SilkscreenFixedSize
+  else
+    Silkscreen.size := MilsToCoord(SlkSize);
+  if SilkscreenIsFixedWidth then
+    Silkscreen.Width := SilkscreenFixedWidth
+  else
+    Silkscreen.Width := 2 * (Silkscreen.size / 10);
+
+  // Cache all obstacles the wiggle radius could possibly reach
+  Rect := Get_Obj_Rect(Silkscreen);
+  MaxDim := Rect.Right - Rect.Left;
+  if (Rect.Top - Rect.Bottom) > MaxDim then
+    MaxDim := Rect.Top - Rect.Bottom;
+  RegionExpansion := MaxDim + SilkscreenPositionDelta +
+    MilsToCoord(WIGGLE_RADIUS_MILS + 20);
+  CmpRect := Get_Obj_Rect(Silkscreen.Component);
+  Build_Obstacle_Cache(Silkscreen, CmpRect.Left - RegionExpansion,
+    CmpRect.Bottom - RegionExpansion, CmpRect.Right + RegionExpansion,
+    CmpRect.Top + RegionExpansion);
+
+  // Last-chance pass: always try the normal and the 90-flipped rotation
+  For AlteredRotation := 0 to 1 do
+  begin
+    // Reset silkscreen size for this rotation attempt
+    SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+    if SilkscreenIsFixedSize then
+      Silkscreen.size := SilkscreenFixedSize
+    else
+      Silkscreen.size := MilsToCoord(SlkSize);
+    if SilkscreenIsFixedWidth then
+      Silkscreen.Width := SilkscreenFixedWidth
+    else
+      Silkscreen.Width := 2 * (Silkscreen.size / 10);
+
+    while (CoordToMils(Silkscreen.size) >= ABS_MIN_SILK_SIZE) or
+      (SilkscreenIsFixedSize) do
+    begin
+      // Base rectangle for every enabled autoposition
+      BaseL.Clear;
+      BaseB.Clear;
+      BaseR.Clear;
+      BaseT.Clear;
+      BaseX.Clear;
+      BaseY.Clear;
+      BaseIdx.Clear;
+
+      For i := 0 to FormCheckListBox1.Items.Count - 1 do
+      begin
+        if not FormCheckListBox1.Checked[i] then
+          Continue;
+
+        NextAutoP := StrToAutoPos(FormCheckListBox1.Items[i]);
+
+        Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
+        if AlteredRotation = 1 then
+          Silkscreen.Rotation := 90 - Silkscreen.Rotation;
+
+        Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+        AutoPosDeltaAdjust(NextAutoP, 0, 0, Silkscreen, CompLayerName);
+
+        Rect := Get_Obj_Rect(Silkscreen);
+        BaseIdx.Add(IntToStr(i));
+        BaseL.Add(IntToStr(Rect.Left));
+        BaseB.Add(IntToStr(Rect.Bottom));
+        BaseR.Add(IntToStr(Rect.Right));
+        BaseT.Add(IntToStr(Rect.Top));
+        BaseX.Add(IntToStr(Silkscreen.XLocation));
+        BaseY.Add(IntToStr(Silkscreen.YLocation));
+      end;
+
+      // Scan rings outward; once a clear spot is found, later rings can only
+      // be further away, so the search stops early on most parts
+      BestScore := -1;
+      BestB := -1;
+      BestXoff := 0;
+      BestYoff := 0;
+      For r := 0 to WigSteps do
+      begin
+        if (BestScore >= 0) and ((r * r) >= BestScore) then
+          Break;
+
+        For xoff := -r to r do
+        begin
+          For yoff := -r to r do
+          begin
+            // Only the perimeter of ring r; inner cells were already tested
+            if (Abs(xoff) <> r) and (Abs(yoff) <> r) then
+              Continue;
+
+            Dist2 := (xoff * xoff) + (yoff * yoff);
+            if (BestScore >= 0) and (Dist2 >= BestScore) then
+              Continue;
+
+            dx := MilsToCoord(xoff * WIGGLE_STEP_MILS);
+            dy := MilsToCoord(yoff * WIGGLE_STEP_MILS);
+
+            For b := 0 to BaseIdx.Count - 1 do
+            begin
+              CandL := StrToInt(BaseL.Get(b)) + dx;
+              CandB := StrToInt(BaseB.Get(b)) + dy;
+              CandR := StrToInt(BaseR.Get(b)) + dx;
+              CandT := StrToInt(BaseT.Get(b)) + dy;
+
+              if Candidate_Is_Clear(CandL, CandB, CandR, CandT) then
+              begin
+                BestScore := Dist2;
+                BestB := b;
+                BestXoff := xoff;
+                BestYoff := yoff;
+                Break; // Earlier bases are preferred at the same offset
+              end;
+            end;
+          end;
+        end;
+      end;
+
+      if BestB >= 0 then
+      begin
+        // PLACED: commit the closest clear position found
+        ChosenIdx := StrToInt(BaseIdx.Get(BestB));
+        NextAutoP := StrToAutoPos(FormCheckListBox1.Items[ChosenIdx]);
+
+        dx := MilsToCoord(BestXoff * WIGGLE_STEP_MILS);
+        dy := MilsToCoord(BestYoff * WIGGLE_STEP_MILS);
+
+        Silkscreen.BeginModify;
+
+        Rotation_Silk(Silkscreen, SilkscreenHor, NextAutoP);
+        if AlteredRotation = 1 then
+          Silkscreen.Rotation := 90 - Silkscreen.Rotation;
+
+        Silkscreen.Component.ChangeNameAutoposition := NextAutoP;
+        Silkscreen.MoveToXY(StrToInt(BaseX.Get(BestB)) + dx,
+          StrToInt(BaseY.Get(BestB)) + dy);
+
+        Silkscreen.EndModify;
+
+        result := True;
+        Exit;
+      end;
+
+      if SilkscreenIsFixedSize then
+        Break;
+
+      if (CoordToMils(Silkscreen.size) - SILK_SIZE_DELTA) < ABS_MIN_SILK_SIZE
+      then
+        Break;
+
+      // No placement found, try reducing silkscreen size
+      Silkscreen.size := Silkscreen.size - MilsToCoord(SILK_SIZE_DELTA);
+      if SilkscreenIsFixedWidth then
+        Silkscreen.Width := SilkscreenFixedWidth
+      else
+        Silkscreen.Width := Int(2 * (Silkscreen.size / 10) - 10000);
+    end;
+  end;
+
+  // Still not placed: reset size and park the designator off the board again
+  Silkscreen.BeginModify;
+
+  SlkSize := Get_Silk_Size(Silkscreen, MIN_SILK_SIZE);
+  if SilkscreenIsFixedSize then
+    Silkscreen.size := SilkscreenFixedSize
+  else
+    Silkscreen.size := MilsToCoord(SlkSize);
+  if SilkscreenIsFixedWidth then
+    Silkscreen.Width := SilkscreenFixedWidth
+  else
+    Silkscreen.Width := 2 * (Silkscreen.size / 10);
+
+  Rotation_MatchSilk2Comp(Silkscreen);
+
+  Silkscreen.EndModify;
+
+  Silkscreen.BeginModify;
+
+  Silkscreen.Component.ChangeNameAutoposition := eAutoPos_Manual;
+
+  Silkscreen.MoveToXY(Board.XOrigin - 1000000, Board.YOrigin + 1000000);
+
+  Silkscreen.EndModify;
+end;
+
 procedure RunGUI;
 begin
   MEM_AllowUnder.Text := TEXTBOXINIT;
   Form_PlaceSilk.ShowModal;
+end;
+
+// Writes to the status bar at the bottom of the Altium window
+procedure SetStatusBar(StatusText: String);
+begin
+  Client.GUIManager.StatusBar_SetState(0, StatusText);
 end;
 
 procedure AddMessage(MessageClass, MessageText: String);
@@ -1255,17 +1542,20 @@ end;
 
 { .............................................................................. }
 procedure Main(Place_Selected: Boolean; Place_OverComp: Boolean;
-  Place_RestoreOriginal: Boolean; AllowUnderList: TStringList);
+  Place_Hide: Boolean; Place_RestoreOriginal: Boolean;
+  AllowUnderList: TStringList);
 const
   OFFSET_CNT = 3; // Number of attempts to offset position in x or y directions
   STATUS_INTERVAL = 10; // Update messages panel/progress every N components
 var
   Silkscreen: IPCB_Text;
+  Slk: IPCB_Text;
   Cmp: IPCB_Component;
   Iterator: IPCB_BoardIterator;
-  Count, PlaceCnt, i: Integer;
+  Count, PlaceCnt, Pass2Cnt, i: Integer;
   NotPlaced: TObjectList;
   StillFailed: TObjectList;
+  Remaining: TObjectList;
   SortedComps: TStringList;
   CmpRect: TCoordRect;
   SizeKey: Integer;
@@ -1281,6 +1571,7 @@ begin
   GetWorkspace.DM_ShowMessageView();
 
   AddMessage('APS Event', 'Placing Started');
+  SetStatusBar('APS: Placing silkscreen designators...');
 
   // Set cursor to waiting.
   Screen.Cursor := crHourGlass;
@@ -1344,6 +1635,11 @@ begin
     BoardIsRectangular := False;
   end;
 
+  // Unhide everything first so previously hidden designators get placed too.
+  // The Hide Designator failure option still applies at the end of the run.
+  if UnhideAllDesignators then
+    Unhide_All_Designators(0);
+
   // Initialize silk reference designators to board origin coordinates.
   Move_Silk_Off_Board(Place_Selected);
 
@@ -1404,15 +1700,56 @@ begin
         Format('%d of %d silkscreens placed (%f%%) in %d Second(s)',
         [PlaceCnt, Count, PlaceCnt / Count * 100,
         Trunc((Now() - StartTime) * 86400)]));
+      SetStatusBar(Format('APS 1st pass: %d of %d placed',
+        [PlaceCnt, Count]));
     end;
   end;
 
   // Second pass: rotation flip for squarish components + wider offset search
   PlaceCnt := PlaceCnt + Retry_Failed(NotPlaced, StillFailed, OFFSET_CNT);
 
-  // Move each still-unplaced silkscreen reference designator over its component
+  // 2nd pass: best-fit wiggle search around every allowed position
+  if WiggleEnabled and (StillFailed.Count > 0) then
+  begin
+    AddMessage('APS Event', Format('Running 2nd pass on %d unplaced designator(s)',
+      [StillFailed.Count]));
+    SetStatusBar(Format('APS 2nd pass: searching wider for %d unplaced designator(s)...',
+      [StillFailed.Count]));
+
+    ProgressBar1.Position := 0;
+    ProgressBar1.Max := StillFailed.Count;
+    ProgressBar1.Update;
+
+    Pass2Cnt := 0;
+    Remaining := TObjectList.Create;
+    For i := 0 to StillFailed.Count - 1 do
+    begin
+      Slk := StillFailed[i];
+
+      if Wiggle_Place(Slk) then
+      begin
+        Inc(PlaceCnt);
+        Inc(Pass2Cnt);
+      end
+      else
+        Remaining.Add(Slk);
+
+      ProgressBar1.Position := i + 1;
+      ProgressBar1.Update;
+      AddMessage('APS Status',
+        Format('2nd pass: %d of %d remaining designators placed in %d Second(s)',
+        [Pass2Cnt, i + 1, Trunc((Now() - StartTime) * 86400)]));
+      SetStatusBar(Format('APS 2nd pass: %d of %d remaining designators placed',
+        [Pass2Cnt, i + 1]));
+    end;
+    StillFailed := Remaining;
+  end;
+
+  // Handle whatever is still unplaced per the selected failure option
   if Place_OverComp then
     Move_Silk_Over_Comp(StillFailed);
+  if Place_Hide then
+    Hide_Designators(StillFailed);
   if Place_RestoreOriginal then
     Restore_Comp(StillFailed);
 
@@ -1452,6 +1789,8 @@ begin
   AddMessage('APS Event',
     Format('Placing finished with 0 contention(s). Failed to placed %d silkscreen(s) in %d Second(s)',
     [Count - PlaceCnt, Trunc((Now() - StartTime) * 86400)]));
+  SetStatusBar(Format('APS: Finished. %d of %d designators placed',
+    [PlaceCnt, Count]));
 
   if Count > 0 then
     ShowMessage('Script execution complete. ' + IntToStr(PlaceCnt) + ' out of '
@@ -1508,6 +1847,8 @@ begin
   IniFile.WriteBool('General', 'FixedWidthEnabled', FixedWidthChk.Checked);
   IniFile.WriteString('General', 'FixedWidth', FixedWidthEdt.Text);
   IniFile.WriteString('General', 'PositionDelta', PositionDeltaEdt.Text);
+  IniFile.WriteBool('General', 'WiggleEnabled', WiggleChk.Checked);
+  IniFile.WriteBool('General', 'UnhideAllDesignators', UnhideAllChk.Checked);
 
   // I know about loops, but...
   IniFile.WriteBool('General', 'Position1', PositionsClb.Checked[0]);
@@ -1555,6 +1896,10 @@ begin
     FixedWidthEdt.Text);
   PositionDeltaEdt.Text := IniFile.ReadString('General', 'PositionDelta',
     PositionDeltaEdt.Text);
+  WiggleChk.Checked := IniFile.ReadBool('General', 'WiggleEnabled',
+    WiggleChk.Checked);
+  UnhideAllChk.Checked := IniFile.ReadBool('General', 'UnhideAllDesignators',
+    UnhideAllChk.Checked);
 
   // I know about loops, but...
   PositionsClb.Checked[0] := IniFile.ReadString('General', 'Position1',
@@ -1587,6 +1932,7 @@ procedure TForm_PlaceSilk.BTN_RunClick(Sender: TObject);
 var
   Place_Selected: Boolean;
   Place_OverComp: Boolean;
+  Place_Hide: Boolean;
   Place_RestoreOriginal: Boolean;
   StrNoSpace: TPCBString;
   i: Integer;
@@ -1599,6 +1945,7 @@ begin
 
   Place_Selected := RG_Filter.ItemIndex = 1;
   Place_OverComp := RG_Failures.ItemIndex = 0;
+  Place_Hide := RG_Failures.ItemIndex = 1;
   Place_RestoreOriginal := RG_Failures.ItemIndex = 2;
 
   AvoidVias := chkAvoidVias.Checked;
@@ -1631,7 +1978,11 @@ begin
   // Pick up strategy changes made in the GUI or loaded from the ini file
   RotationStrategy := RotationStrategyCb.GetItemIndex();
 
-  Main(Place_Selected, Place_OverComp, Place_RestoreOriginal, AllowUnderList);
+  WiggleEnabled := WiggleChk.Checked;
+  UnhideAllDesignators := UnhideAllChk.Checked;
+
+  Main(Place_Selected, Place_OverComp, Place_Hide, Place_RestoreOriginal,
+    AllowUnderList);
 
   AllowUnderList.Free;
 
